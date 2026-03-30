@@ -38,11 +38,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create and push tag
+      - name: Create tag
         if: github.event_name == 'workflow_dispatch'
-        run: |
-          git tag ${{ github.event.inputs.tag }}
-          git push origin ${{ github.event.inputs.tag }}
+        run: git tag ${{ github.event.inputs.tag }}
 
       - uses: actions/setup-go@v5
         with:
