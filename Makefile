@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fmt vet
+.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html
 
 BINARY_NAME=terraform-provider-postgresql
 GO=go
@@ -14,7 +14,15 @@ test:
 	$(GO) test -v -race -coverprofile=coverage.out ./...
 
 testacc:
-	TF_ACC=1 $(GO) test -v -race -timeout 120m ./...
+	TF_ACC=1 $(GO) test -v -timeout 600s -parallel 1 ./internal/provider/
+
+testacc-cover:
+	TF_ACC=1 $(GO) test -timeout 600s -parallel 1 -coverprofile=coverage.out ./internal/provider/
+	$(GO) tool cover -func=coverage.out | tail -1
+
+cover-html: coverage.out
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Open coverage.html in your browser"
 
 fmt:
 	$(GO) fmt ./...

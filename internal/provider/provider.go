@@ -116,6 +116,9 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 		return
 	}
 
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+
 	err = db.PingContext(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to connect to PostgreSQL", err.Error())

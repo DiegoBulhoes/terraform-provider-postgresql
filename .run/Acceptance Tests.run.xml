@@ -1,0 +1,22 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Acceptance Tests" type="GoTestRunConfiguration" factoryName="Go Test">
+    <module name="terraform-provider-postgresql" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="-v -race -timeout 120m -count=1" />
+    <envs>
+      <env name="TF_ACC" value="1" />
+      <env name="PGHOST" value="localhost" />
+      <env name="PGPORT" value="5432" />
+      <env name="PGUSER" value="postgres" />
+      <env name="PGPASSWORD" value="postgres" />
+      <env name="PGDATABASE" value="postgres" />
+      <env name="PGSSLMODE" value="disable" />
+    </envs>
+    <kind value="PACKAGE" />
+    <package value="github.com/DiegoBulhoes/terraform-provider-postgresql" />
+    <directory value="$PROJECT_DIR$/internal/provider" />
+    <filePath value="$PROJECT_DIR$/internal/provider" />
+    <framework value="gotest" />
+    <method v="2" />
+  </configuration>
+</component>

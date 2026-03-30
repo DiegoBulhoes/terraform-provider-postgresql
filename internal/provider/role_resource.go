@@ -467,6 +467,9 @@ func (r *roleResource) readRole(ctx context.Context, model *roleResourceModel) d
 		rolesList, listDiags := types.ListValue(types.StringType, memberOfRoles)
 		diags.Append(listDiags...)
 		model.Roles = rolesList
+	} else if !model.Roles.IsNull() {
+		// Preserve empty list if roles was explicitly set (even as [])
+		model.Roles, _ = types.ListValue(types.StringType, []attr.Value{})
 	} else {
 		model.Roles = types.ListNull(types.StringType)
 	}

@@ -30,17 +30,17 @@ type DatabaseResource struct {
 }
 
 type DatabaseResourceModel struct {
-	Name            types.String `tfsdk:"name"`
-	Owner           types.String `tfsdk:"owner"`
-	Template        types.String `tfsdk:"template"`
-	Encoding        types.String `tfsdk:"encoding"`
-	LcCollate       types.String `tfsdk:"lc_collate"`
-	LcCtype         types.String `tfsdk:"lc_ctype"`
-	TablespaceName  types.String `tfsdk:"tablespace_name"`
-	ConnectionLimit types.Int64  `tfsdk:"connection_limit"`
-	AllowConnections types.Bool  `tfsdk:"allow_connections"`
-	IsTemplate      types.Bool   `tfsdk:"is_template"`
-	OID             types.Int64  `tfsdk:"oid"`
+	Name             types.String `tfsdk:"name"`
+	Owner            types.String `tfsdk:"owner"`
+	Template         types.String `tfsdk:"template"`
+	Encoding         types.String `tfsdk:"encoding"`
+	LcCollate        types.String `tfsdk:"lc_collate"`
+	LcCtype          types.String `tfsdk:"lc_ctype"`
+	TablespaceName   types.String `tfsdk:"tablespace_name"`
+	ConnectionLimit  types.Int64  `tfsdk:"connection_limit"`
+	AllowConnections types.Bool   `tfsdk:"allow_connections"`
+	IsTemplate       types.Bool   `tfsdk:"is_template"`
+	OID              types.Int64  `tfsdk:"oid"`
 }
 
 func NewDatabaseResource() resource.Resource {

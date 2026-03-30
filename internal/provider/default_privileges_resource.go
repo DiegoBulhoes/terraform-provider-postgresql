@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -22,6 +23,14 @@ var (
 	_ resource.Resource              = (*DefaultPrivilegesResource)(nil)
 	_ resource.ResourceWithConfigure = (*DefaultPrivilegesResource)(nil)
 )
+
+// defaultPrivObjTypeChars maps object type names to pg_default_acl.defaclobjtype characters.
+var defaultPrivObjTypeChars = map[string]string{
+	"table":    "r",
+	"sequence": "S",
+	"function": "f",
+	"type":     "T",
+}
 
 var objectTypePlural = map[string]string{
 	"table":    "TABLES",
@@ -159,7 +168,96 @@ func (r *DefaultPrivilegesResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
-	// No server-side drift detection in v1; return state as-is.
+	owner := data.Owner.ValueString()
+	role := data.Role.ValueString()
+	objectType := data.ObjectType.ValueString()
+	objTypeChar := defaultPrivObjTypeChars[objectType]
+
+	var query string
+	var args []interface{}
+
+	if !data.Schema.IsNull() && !data.Schema.IsUnknown() {
+		query = `
+			SELECT privilege_type, is_grantable
+			FROM (
+				SELECT (aclexplode(defaclacl)).grantee,
+				       (aclexplode(defaclacl)).privilege_type,
+				       (aclexplode(defaclacl)).is_grantable
+				FROM pg_default_acl da
+				JOIN pg_namespace n ON da.defaclnamespace = n.oid
+				WHERE da.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = $1)
+				  AND da.defaclobjtype = $2
+				  AND n.nspname = $3
+			) AS acl
+			JOIN pg_roles ON acl.grantee = pg_roles.oid
+			WHERE pg_roles.rolname = $4
+		`
+		args = []interface{}{owner, objTypeChar, data.Schema.ValueString(), role}
+	} else {
+		query = `
+			SELECT privilege_type, is_grantable
+			FROM (
+				SELECT (aclexplode(defaclacl)).grantee,
+				       (aclexplode(defaclacl)).privilege_type,
+				       (aclexplode(defaclacl)).is_grantable
+				FROM pg_default_acl da
+				WHERE da.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = $1)
+				  AND da.defaclobjtype = $2
+				  AND da.defaclnamespace = 0
+			) AS acl
+			JOIN pg_roles ON acl.grantee = pg_roles.oid
+			WHERE pg_roles.rolname = $3
+		`
+		args = []interface{}{owner, objTypeChar, role}
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading default privileges", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var privileges []string
+	hasRows := false
+
+	for rows.Next() {
+		hasRows = true
+		var privType string
+		var isGrantable bool
+		if err := rows.Scan(&privType, &isGrantable); err != nil {
+			resp.Diagnostics.AddError("Error scanning default privileges", err.Error())
+			return
+		}
+		privileges = append(privileges, privType)
+	}
+	if err := rows.Err(); err != nil {
+		resp.Diagnostics.AddError("Error iterating default privileges", err.Error())
+		return
+	}
+
+	if !hasRows {
+		tflog.Warn(ctx, "No default privileges found, removing from state", map[string]interface{}{
+			"owner":       owner,
+			"role":        role,
+			"object_type": objectType,
+		})
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	privElements := make([]attr.Value, len(privileges))
+	for i, p := range privileges {
+		privElements[i] = types.StringValue(p)
+	}
+	privSet, diags := types.SetValue(types.StringType, privElements)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	data.Privileges = privSet
+	data.ID = types.StringValue(r.compositeID(data))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
