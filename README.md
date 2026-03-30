@@ -1,16 +1,16 @@
 # Terraform Provider PostgreSQL
 
-> **Em construcao** — Este provider esta em desenvolvimento ativo e ainda nao possui uma release estavel. A API pode mudar sem aviso previo.
+> **Work in progress** — This provider is under active development and does not have a stable release yet. The API may change without notice.
 
-Terraform provider para gerenciar recursos PostgreSQL: roles, databases, schemas, grants e default privileges.
+Terraform provider for managing PostgreSQL resources: roles, databases, schemas, grants, and default privileges.
 
-## Requisitos
+## Requirements
 
 - [Terraform](https://www.terraform.io/downloads) >= 1.0
-- [Go](https://go.dev/dl/) >= 1.25 (para build)
+- [Go](https://go.dev/dl/) >= 1.25 (for building)
 - PostgreSQL >= 12
 
-## Uso
+## Usage
 
 ```hcl
 terraform {
@@ -32,32 +32,32 @@ provider "postgresql" {
 }
 ```
 
-O provider tambem aceita configuracao via variaveis de ambiente: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`.
+The provider also accepts configuration via environment variables: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`.
 
-## Recursos
+## Resources
 
 ### Resources
 
-| Resource | Descricao |
+| Resource | Description |
 |---|---|
-| `postgresql_role` | Gerencia roles (usuarios/grupos) |
-| `postgresql_database` | Gerencia databases |
-| `postgresql_schema` | Gerencia schemas |
-| `postgresql_grant` | Gerencia GRANT de privilegios em objetos |
-| `postgresql_default_privileges` | Gerencia ALTER DEFAULT PRIVILEGES |
+| `postgresql_role` | Manages roles (users/groups) |
+| `postgresql_database` | Manages databases |
+| `postgresql_schema` | Manages schemas |
+| `postgresql_grant` | Manages GRANT privileges on objects |
+| `postgresql_default_privileges` | Manages ALTER DEFAULT PRIVILEGES |
 
 ### Data Sources
 
-| Data Source | Descricao |
+| Data Source | Description |
 |---|---|
-| `postgresql_role` | Consulta atributos de um role |
-| `postgresql_database` | Consulta atributos de um database |
-| `postgresql_schemas` | Lista schemas com filtros |
-| `postgresql_query` | Executa SELECT e retorna resultados |
+| `postgresql_role` | Reads role attributes |
+| `postgresql_database` | Reads database attributes |
+| `postgresql_schemas` | Lists schemas with filters |
+| `postgresql_query` | Executes a SELECT query and returns results |
 
-## Exemplos
+## Examples
 
-### Criar role e database
+### Create a role and database
 
 ```hcl
 resource "postgresql_role" "app" {
@@ -74,7 +74,7 @@ resource "postgresql_database" "app" {
 }
 ```
 
-### Grant de privilegios
+### Grant privileges
 
 ```hcl
 resource "postgresql_schema" "app" {
@@ -99,7 +99,7 @@ resource "postgresql_default_privileges" "tables" {
 }
 ```
 
-### Consultar dados
+### Query data
 
 ```hcl
 data "postgresql_role" "current" {
@@ -117,7 +117,7 @@ data "postgresql_query" "version" {
 }
 ```
 
-## Desenvolvimento
+## Development
 
 ### Build
 
@@ -125,45 +125,45 @@ data "postgresql_query" "version" {
 make build
 ```
 
-### Testes
+### Tests
 
-Os testes usam [testcontainers-go](https://github.com/testcontainers/testcontainers-go) para subir um PostgreSQL automaticamente via Docker.
+Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker.
 
 ```bash
-# Rodar todos os testes de aceitacao
+# Run all acceptance tests
 make testacc
 
-# Com coverage
+# With coverage
 make testacc-cover
 
-# Gerar HTML de coverage
+# Generate coverage HTML report
 make cover-html
 ```
 
-Veja [docs/testing.md](docs/testing.md) para mais detalhes.
+See [docs/testing.md](docs/testing.md) for more details.
 
-### Estrutura
+### Project structure
 
 ```
 .
-├── main.go                          # Entrypoint do provider
+├── main.go                            # Provider entrypoint
 ├── internal/provider/
-│   ├── provider.go                  # Configuracao do provider
-│   ├── role_resource.go             # Resource: postgresql_role
-│   ├── database_resource.go         # Resource: postgresql_database
-│   ├── schema_resource.go          # Resource: postgresql_schema
-│   ├── grant_resource.go            # Resource: postgresql_grant
+│   ├── provider.go                    # Provider configuration
+│   ├── role_resource.go               # Resource: postgresql_role
+│   ├── database_resource.go           # Resource: postgresql_database
+│   ├── schema_resource.go             # Resource: postgresql_schema
+│   ├── grant_resource.go              # Resource: postgresql_grant
 │   ├── default_privileges_resource.go # Resource: postgresql_default_privileges
-│   ├── role_data_source.go          # Data Source: postgresql_role
-│   ├── database_data_source.go      # Data Source: postgresql_database
-│   ├── schemas_data_source.go       # Data Source: postgresql_schemas
-│   ├── query_data_source.go         # Data Source: postgresql_query
-│   └── *_test.go                    # 58 testes de aceitacao
+│   ├── role_data_source.go            # Data Source: postgresql_role
+│   ├── database_data_source.go        # Data Source: postgresql_database
+│   ├── schemas_data_source.go         # Data Source: postgresql_schemas
+│   ├── query_data_source.go           # Data Source: postgresql_query
+│   └── *_test.go                      # 58 acceptance tests
 ├── docs/
-│   └── testing.md                   # Documentacao de testes
+│   └── testing.md                     # Testing documentation
 └── .github/workflows/
-    ├── test.yml                     # CI: lint + testes
-    └── release.yml                  # CD: GoReleaser
+    ├── test.yml                       # CI: lint + tests
+    └── release.yml                    # CD: GoReleaser
 ```
 
 ## License
