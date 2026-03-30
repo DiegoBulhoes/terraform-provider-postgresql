@@ -39,13 +39,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run unit tests
-        run: go test -race -coverprofile=coverage-unit.out ./...
-
-      - name: Upload unit coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-unit
-          path: coverage-unit.out
+        run: go test -race ./...
 
   acceptance:
     name: Acceptance Tests
@@ -65,18 +59,3 @@ jobs:
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out | tail -1
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-acceptance
-          path: coverage.out
-
-      - name: Generate coverage HTML
-        run: go tool cover -html=coverage.out -o coverage.html
-
-      - name: Upload coverage HTML
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html
-          path: coverage.html
