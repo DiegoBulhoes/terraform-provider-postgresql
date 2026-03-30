@@ -38,8 +38,18 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# Coverage
+coverage.out
+coverage.html
+
 # GoReleaser
 dist/
 tmp/
+
+# Claude
+.claude/
+
+# Run configs
+.run/
 
 todo.md
