@@ -1,6 +1,10 @@
-# Terraform Provider PostgreSQL
+# Terraform Provider PostgreSQL (In Development)
 
-> **Work in progress** — This provider is under active development and does not have a stable release yet. The API may change without notice.
+> **⚠️ NOT READY FOR PRODUCTION USE**
+>
+> This provider is a **learning project** under active development. It is not published to the Terraform Registry and has no stable release. Resources, attributes, and behaviors may change or break at any time without notice.
+>
+> **Do not use this in production environments.**
 
 Terraform provider for managing PostgreSQL resources: roles, databases, schemas, grants, and default privileges.
 
