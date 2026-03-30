@@ -32,7 +32,6 @@ checksum:
 
 signs:
   - artifacts: checksum
-    output: true
     args:
       - "--batch"
       - "--pinentry-mode"

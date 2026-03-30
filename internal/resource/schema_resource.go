@@ -1,4 +1,4 @@
-package provider
+package resource
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -77,16 +78,11 @@ func (r *schemaResource) Configure(_ context.Context, req resource.ConfigureRequ
 	if req.ProviderData == nil {
 		return
 	}
-
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-
 	r.db = db
 }
 
@@ -106,7 +102,7 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	sqlStmt += pq.QuoteIdentifier(schemaName)
 
-	if !plan.Owner.IsNull() && !plan.Owner.IsUnknown() {
+	if common.IsSet(plan.Owner) {
 		sqlStmt += " AUTHORIZATION " + pq.QuoteIdentifier(plan.Owner.ValueString())
 	}
 
@@ -231,7 +227,7 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	// Handle owner change
-	if !plan.Owner.IsNull() && !plan.Owner.IsUnknown() &&
+	if common.IsSet(plan.Owner) &&
 		plan.Owner.ValueString() != state.Owner.ValueString() {
 		sqlStmt := fmt.Sprintf(
 			"ALTER SCHEMA %s OWNER TO %s",

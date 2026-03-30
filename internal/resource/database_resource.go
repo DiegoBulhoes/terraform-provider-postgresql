@@ -1,4 +1,4 @@
-package provider
+package resource
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -21,15 +22,15 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*DatabaseResource)(nil)
-	_ resource.ResourceWithImportState = (*DatabaseResource)(nil)
+	_ resource.Resource                = (*databaseResource)(nil)
+	_ resource.ResourceWithImportState = (*databaseResource)(nil)
 )
 
-type DatabaseResource struct {
+type databaseResource struct {
 	db *sql.DB
 }
 
-type DatabaseResourceModel struct {
+type databaseResourceModel struct {
 	Name             types.String `tfsdk:"name"`
 	Owner            types.String `tfsdk:"owner"`
 	Template         types.String `tfsdk:"template"`
@@ -44,14 +45,14 @@ type DatabaseResourceModel struct {
 }
 
 func NewDatabaseResource() resource.Resource {
-	return &DatabaseResource{}
+	return &databaseResource{}
 }
 
-func (r *DatabaseResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *databaseResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_database"
 }
 
-func (r *DatabaseResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages a PostgreSQL database.",
 		Attributes: map[string]schema.Attribute{
@@ -141,25 +142,20 @@ func (r *DatabaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 	}
 }
 
-func (r *DatabaseResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *databaseResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
-
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-
 	r.db = db
 }
 
-func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan DatabaseResourceModel
+func (r *databaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan databaseResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -169,39 +165,39 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 
 	var opts []string
 
-	if !plan.Owner.IsNull() && !plan.Owner.IsUnknown() {
+	if common.IsSet(plan.Owner) {
 		opts = append(opts, fmt.Sprintf("OWNER = %s", pq.QuoteIdentifier(plan.Owner.ValueString())))
 	}
 
-	if !plan.Template.IsNull() && !plan.Template.IsUnknown() {
+	if common.IsSet(plan.Template) {
 		opts = append(opts, fmt.Sprintf("TEMPLATE = %s", pq.QuoteIdentifier(plan.Template.ValueString())))
 	}
 
-	if !plan.Encoding.IsNull() && !plan.Encoding.IsUnknown() {
+	if common.IsSet(plan.Encoding) {
 		opts = append(opts, fmt.Sprintf("ENCODING = %s", pq.QuoteLiteral(plan.Encoding.ValueString())))
 	}
 
-	if !plan.LcCollate.IsNull() && !plan.LcCollate.IsUnknown() {
+	if common.IsSet(plan.LcCollate) {
 		opts = append(opts, fmt.Sprintf("LC_COLLATE = %s", pq.QuoteLiteral(plan.LcCollate.ValueString())))
 	}
 
-	if !plan.LcCtype.IsNull() && !plan.LcCtype.IsUnknown() {
+	if common.IsSet(plan.LcCtype) {
 		opts = append(opts, fmt.Sprintf("LC_CTYPE = %s", pq.QuoteLiteral(plan.LcCtype.ValueString())))
 	}
 
-	if !plan.TablespaceName.IsNull() && !plan.TablespaceName.IsUnknown() {
+	if common.IsSet(plan.TablespaceName) {
 		opts = append(opts, fmt.Sprintf("TABLESPACE = %s", pq.QuoteIdentifier(plan.TablespaceName.ValueString())))
 	}
 
-	if !plan.ConnectionLimit.IsNull() && !plan.ConnectionLimit.IsUnknown() {
+	if common.IsSet(plan.ConnectionLimit) {
 		opts = append(opts, fmt.Sprintf("CONNECTION LIMIT = %d", plan.ConnectionLimit.ValueInt64()))
 	}
 
-	if !plan.AllowConnections.IsNull() && !plan.AllowConnections.IsUnknown() {
+	if common.IsSet(plan.AllowConnections) {
 		opts = append(opts, fmt.Sprintf("ALLOW_CONNECTIONS = %t", plan.AllowConnections.ValueBool()))
 	}
 
-	if !plan.IsTemplate.IsNull() && !plan.IsTemplate.IsUnknown() {
+	if common.IsSet(plan.IsTemplate) {
 		opts = append(opts, fmt.Sprintf("IS_TEMPLATE = %t", plan.IsTemplate.ValueBool()))
 	}
 
@@ -229,8 +225,8 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state DatabaseResourceModel
+func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state databaseResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -252,9 +248,9 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan DatabaseResourceModel
-	var state DatabaseResourceModel
+func (r *databaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan databaseResourceModel
+	var state databaseResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -264,7 +260,7 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 	dbName := pq.QuoteIdentifier(plan.Name.ValueString())
 
 	// Update owner
-	if !plan.Owner.Equal(state.Owner) && !plan.Owner.IsNull() && !plan.Owner.IsUnknown() {
+	if !plan.Owner.Equal(state.Owner) && common.IsSet(plan.Owner) {
 		query := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", dbName, pq.QuoteIdentifier(plan.Owner.ValueString()))
 		_, err := r.db.ExecContext(ctx, query)
 		if err != nil {
@@ -277,7 +273,7 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	// Update tablespace
-	if !plan.TablespaceName.Equal(state.TablespaceName) && !plan.TablespaceName.IsNull() && !plan.TablespaceName.IsUnknown() {
+	if !plan.TablespaceName.Equal(state.TablespaceName) && common.IsSet(plan.TablespaceName) {
 		query := fmt.Sprintf("ALTER DATABASE %s SET TABLESPACE %s", dbName, pq.QuoteIdentifier(plan.TablespaceName.ValueString()))
 		_, err := r.db.ExecContext(ctx, query)
 		if err != nil {
@@ -323,8 +319,8 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state DatabaseResourceModel
+func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state databaseResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -356,11 +352,11 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 }
 
-func (r *DatabaseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *databaseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-func (r *DatabaseResource) readDatabase(ctx context.Context, model *DatabaseResourceModel) diag.Diagnostics {
+func (r *databaseResource) readDatabase(ctx context.Context, model *databaseResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	dbName := model.Name.ValueString()

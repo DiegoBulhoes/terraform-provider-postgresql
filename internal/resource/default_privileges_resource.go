@@ -1,4 +1,4 @@
-package provider
+package resource
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	_ resource.Resource              = (*DefaultPrivilegesResource)(nil)
-	_ resource.ResourceWithConfigure = (*DefaultPrivilegesResource)(nil)
+	_ resource.Resource              = (*defaultPrivilegesResource)(nil)
+	_ resource.ResourceWithConfigure = (*defaultPrivilegesResource)(nil)
 )
 
 // defaultPrivObjTypeChars maps object type names to pg_default_acl.defaclobjtype characters.
@@ -39,11 +39,11 @@ var objectTypePlural = map[string]string{
 	"type":     "TYPES",
 }
 
-type DefaultPrivilegesResource struct {
+type defaultPrivilegesResource struct {
 	db *sql.DB
 }
 
-type DefaultPrivilegesResourceModel struct {
+type defaultPrivilegesResourceModel struct {
 	ID         types.String `tfsdk:"id"`
 	Owner      types.String `tfsdk:"owner"`
 	Role       types.String `tfsdk:"role"`
@@ -54,14 +54,14 @@ type DefaultPrivilegesResourceModel struct {
 }
 
 func NewDefaultPrivilegesResource() resource.Resource {
-	return &DefaultPrivilegesResource{}
+	return &defaultPrivilegesResource{}
 }
 
-func (r *DefaultPrivilegesResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *defaultPrivilegesResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_default_privileges"
 }
 
-func (r *DefaultPrivilegesResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *defaultPrivilegesResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages PostgreSQL default privileges using ALTER DEFAULT PRIVILEGES.",
 		Attributes: map[string]schema.Attribute{
@@ -116,35 +116,26 @@ func (r *DefaultPrivilegesResource) Schema(_ context.Context, _ resource.SchemaR
 	}
 }
 
-func (r *DefaultPrivilegesResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *defaultPrivilegesResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
-
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-
 	r.db = db
 }
 
-func (r *DefaultPrivilegesResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var data DefaultPrivilegesResourceModel
+func (r *defaultPrivilegesResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var data defaultPrivilegesResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	privileges, diags := r.privilegesFromSet(ctx, data.Privileges)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	privileges := common.PrivilegesToSlice(ctx, data.Privileges)
 
 	plural := objectTypePlural[data.ObjectType.ValueString()]
 	query := r.buildGrantSQL(data.Owner.ValueString(), data.Role.ValueString(), data.Schema, privileges, plural)
@@ -161,8 +152,8 @@ func (r *DefaultPrivilegesResource) Create(ctx context.Context, req resource.Cre
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *DefaultPrivilegesResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var data DefaultPrivilegesResourceModel
+func (r *defaultPrivilegesResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var data defaultPrivilegesResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -176,7 +167,7 @@ func (r *DefaultPrivilegesResource) Read(ctx context.Context, req resource.ReadR
 	var query string
 	var args []interface{}
 
-	if !data.Schema.IsNull() && !data.Schema.IsUnknown() {
+	if common.IsSet(data.Schema) {
 		query = `
 			SELECT privilege_type, is_grantable
 			FROM (
@@ -261,14 +252,14 @@ func (r *DefaultPrivilegesResource) Read(ctx context.Context, req resource.ReadR
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *DefaultPrivilegesResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan DefaultPrivilegesResourceModel
+func (r *defaultPrivilegesResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan defaultPrivilegesResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	var state DefaultPrivilegesResourceModel
+	var state defaultPrivilegesResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -287,11 +278,7 @@ func (r *DefaultPrivilegesResource) Update(ctx context.Context, req resource.Upd
 	}
 
 	// Grant new defaults.
-	privileges, diags := r.privilegesFromSet(ctx, plan.Privileges)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	privileges := common.PrivilegesToSlice(ctx, plan.Privileges)
 
 	grantQuery := r.buildGrantSQL(plan.Owner.ValueString(), plan.Role.ValueString(), plan.Schema, privileges, plural)
 	tflog.Debug(ctx, "Granting new default privileges", map[string]interface{}{"query": grantQuery})
@@ -306,8 +293,8 @@ func (r *DefaultPrivilegesResource) Update(ctx context.Context, req resource.Upd
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *DefaultPrivilegesResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var data DefaultPrivilegesResourceModel
+func (r *defaultPrivilegesResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var data defaultPrivilegesResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -326,12 +313,12 @@ func (r *DefaultPrivilegesResource) Delete(ctx context.Context, req resource.Del
 }
 
 // buildGrantSQL constructs an ALTER DEFAULT PRIVILEGES ... GRANT statement.
-func (r *DefaultPrivilegesResource) buildGrantSQL(owner, role string, schemaAttr types.String, privileges []string, objectTypePlural string) string {
+func (r *defaultPrivilegesResource) buildGrantSQL(owner, role string, schemaAttr types.String, privileges []string, objectTypePlural string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner)))
 
-	if !schemaAttr.IsNull() && !schemaAttr.IsUnknown() {
+	if common.IsSet(schemaAttr) {
 		b.WriteString(fmt.Sprintf(" IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString())))
 	}
 
@@ -345,12 +332,12 @@ func (r *DefaultPrivilegesResource) buildGrantSQL(owner, role string, schemaAttr
 }
 
 // buildRevokeAllSQL constructs an ALTER DEFAULT PRIVILEGES ... REVOKE ALL statement.
-func (r *DefaultPrivilegesResource) buildRevokeAllSQL(owner, role string, schemaAttr types.String, objectTypePlural string) string {
+func (r *defaultPrivilegesResource) buildRevokeAllSQL(owner, role string, schemaAttr types.String, objectTypePlural string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner)))
 
-	if !schemaAttr.IsNull() && !schemaAttr.IsUnknown() {
+	if common.IsSet(schemaAttr) {
 		b.WriteString(fmt.Sprintf(" IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString())))
 	}
 
@@ -363,9 +350,9 @@ func (r *DefaultPrivilegesResource) buildRevokeAllSQL(owner, role string, schema
 }
 
 // compositeID builds the resource ID from its identifying attributes.
-func (r *DefaultPrivilegesResource) compositeID(data DefaultPrivilegesResourceModel) string {
+func (r *defaultPrivilegesResource) compositeID(data defaultPrivilegesResourceModel) string {
 	schemaVal := ""
-	if !data.Schema.IsNull() && !data.Schema.IsUnknown() {
+	if common.IsSet(data.Schema) {
 		schemaVal = data.Schema.ValueString()
 	}
 
@@ -376,20 +363,4 @@ func (r *DefaultPrivilegesResource) compositeID(data DefaultPrivilegesResourceMo
 		schemaVal,
 		data.ObjectType.ValueString(),
 	)
-}
-
-// privilegesFromSet extracts privilege strings from a types.Set.
-func (r *DefaultPrivilegesResource) privilegesFromSet(ctx context.Context, set types.Set) ([]string, diag.Diagnostics) {
-	var privs []types.String
-	diags := set.ElementsAs(ctx, &privs, false)
-	if diags.HasError() {
-		return nil, diags
-	}
-
-	result := make([]string, len(privs))
-	for i, p := range privs {
-		result[i] = strings.ToUpper(p.ValueString())
-	}
-
-	return result, diags
 }

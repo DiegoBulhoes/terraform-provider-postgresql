@@ -1,4 +1,4 @@
-package provider
+package resource
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -123,12 +124,9 @@ func (r *roleResource) Configure(_ context.Context, req resource.ConfigureReques
 	if req.ProviderData == nil {
 		return
 	}
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
 	r.db = db
@@ -155,7 +153,7 @@ func (r *roleResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	// Grant role memberships
-	if !plan.Roles.IsNull() && !plan.Roles.IsUnknown() {
+	if common.IsSet(plan.Roles) {
 		var roles []string
 		resp.Diagnostics.Append(plan.Roles.ElementsAs(ctx, &roles, false)...)
 		if resp.Diagnostics.HasError() {
@@ -249,10 +247,10 @@ func (r *roleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// Manage role memberships
 	var oldRoles []string
 	var newRoles []string
-	if !state.Roles.IsNull() && !state.Roles.IsUnknown() {
+	if common.IsSet(state.Roles) {
 		resp.Diagnostics.Append(state.Roles.ElementsAs(ctx, &oldRoles, false)...)
 	}
-	if !plan.Roles.IsNull() && !plan.Roles.IsUnknown() {
+	if common.IsSet(plan.Roles) {
 		resp.Diagnostics.Append(plan.Roles.ElementsAs(ctx, &newRoles, false)...)
 	}
 	if resp.Diagnostics.HasError() {
@@ -360,11 +358,11 @@ func (r *roleResource) buildRoleOptions(_ context.Context, model *roleResourceMo
 
 	opts = append(opts, fmt.Sprintf("CONNECTION LIMIT %d", model.ConnectionLimit.ValueInt64()))
 
-	if !model.Password.IsNull() && !model.Password.IsUnknown() {
+	if common.IsSet(model.Password) {
 		opts = append(opts, fmt.Sprintf("PASSWORD %s", pq.QuoteLiteral(model.Password.ValueString())))
 	}
 
-	if !model.ValidUntil.IsNull() && !model.ValidUntil.IsUnknown() {
+	if common.IsSet(model.ValidUntil) {
 		opts = append(opts, fmt.Sprintf("VALID UNTIL %s", pq.QuoteLiteral(model.ValidUntil.ValueString())))
 	}
 

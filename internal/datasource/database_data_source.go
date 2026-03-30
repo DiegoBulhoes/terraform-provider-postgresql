@@ -1,10 +1,11 @@
-package provider
+package datasource
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -92,16 +93,11 @@ func (d *databaseDataSource) Configure(_ context.Context, req datasource.Configu
 	if req.ProviderData == nil {
 		return
 	}
-
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T.", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-
 	d.db = db
 }
 

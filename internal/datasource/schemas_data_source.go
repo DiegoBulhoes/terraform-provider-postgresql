@@ -1,10 +1,11 @@
-package provider
+package datasource
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -85,16 +86,11 @@ func (d *schemasDataSource) Configure(_ context.Context, req datasource.Configur
 	if req.ProviderData == nil {
 		return
 	}
-
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T.", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-
 	d.db = db
 }
 
@@ -106,7 +102,7 @@ func (d *schemasDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 
 	includeSystem := false
-	if !state.IncludeSystemSchemas.IsNull() && !state.IncludeSystemSchemas.IsUnknown() {
+	if common.IsSet(state.IncludeSystemSchemas) {
 		includeSystem = state.IncludeSystemSchemas.ValueBool()
 	}
 
@@ -119,13 +115,13 @@ func (d *schemasDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		conditions = append(conditions, `s.nspname NOT LIKE 'pg\_%' AND s.nspname != 'information_schema'`)
 	}
 
-	if !state.LikePattern.IsNull() && !state.LikePattern.IsUnknown() {
+	if common.IsSet(state.LikePattern) {
 		conditions = append(conditions, fmt.Sprintf(`s.nspname LIKE $%d`, argIdx))
 		args = append(args, state.LikePattern.ValueString())
 		argIdx++
 	}
 
-	if !state.NotLikePattern.IsNull() && !state.NotLikePattern.IsUnknown() {
+	if common.IsSet(state.NotLikePattern) {
 		conditions = append(conditions, fmt.Sprintf(`s.nspname NOT LIKE $%d`, argIdx))
 		args = append(args, state.NotLikePattern.ValueString())
 		argIdx++

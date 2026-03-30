@@ -1,4 +1,4 @@
-package provider
+package resource
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -18,13 +19,13 @@ import (
 	"github.com/lib/pq"
 )
 
-var _ resource.Resource = (*GrantResource)(nil)
+var _ resource.Resource = (*grantResource)(nil)
 
-type GrantResource struct {
+type grantResource struct {
 	db *sql.DB
 }
 
-type GrantResourceModel struct {
+type grantResourceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Role            types.String `tfsdk:"role"`
 	Database        types.String `tfsdk:"database"`
@@ -36,14 +37,14 @@ type GrantResourceModel struct {
 }
 
 func NewGrantResource() resource.Resource {
-	return &GrantResource{}
+	return &grantResource{}
 }
 
-func (r *GrantResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *grantResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_grant"
 }
 
-func (r *GrantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Manages PostgreSQL GRANT privileges on database objects.",
 		Attributes: map[string]schema.Attribute{
@@ -102,23 +103,20 @@ func (r *GrantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 	}
 }
 
-func (r *GrantResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *grantResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
-	db, ok := req.ProviderData.(*sql.DB)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *sql.DB, got: %T", req.ProviderData),
-		)
+	db, err := common.ConfigureDB(req.ProviderData)
+	if err != nil {
+		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
 	r.db = db
 }
 
-func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan GrantResourceModel
+func (r *grantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan grantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -130,8 +128,8 @@ func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, 
 	schemaName := plan.Schema.ValueString()
 	withGrantOption := plan.WithGrantOption.ValueBool()
 
-	privileges := extractStringSet(ctx, plan.Privileges)
-	objects := extractStringList(ctx, plan.Objects)
+	privileges := common.StringSetToSlice(ctx, plan.Privileges)
+	objects := common.StringListToSlice(ctx, plan.Objects)
 	privList := strings.Join(privileges, ", ")
 
 	var grantOptionClause string
@@ -154,8 +152,8 @@ func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *GrantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state GrantResourceModel
+func (r *grantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state grantResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -165,7 +163,7 @@ func (r *GrantResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	objectType := strings.ToLower(state.ObjectType.ValueString())
 	database := state.Database.ValueString()
 	schemaName := state.Schema.ValueString()
-	objects := extractStringList(ctx, state.Objects)
+	objects := common.StringListToSlice(ctx, state.Objects)
 
 	// Drift detection for database, schema, and specific object grants.
 	// For "ALL objects" grants (empty objects list on table/sequence/function),
@@ -207,7 +205,7 @@ func (r *GrantResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 // readPrivileges queries the PostgreSQL catalog to determine what privileges a role
 // currently has on a given object.
-func (r *GrantResource) readPrivileges(ctx context.Context, role, objectType, database, schemaName string, objects []string) ([]string, bool, error) {
+func (r *grantResource) readPrivileges(ctx context.Context, role, objectType, database, schemaName string, objects []string) ([]string, bool, error) {
 	var query string
 	var args []interface{}
 
@@ -329,9 +327,9 @@ func (r *GrantResource) readPrivileges(ctx context.Context, role, objectType, da
 	return privileges, allGrantable, rows.Err()
 }
 
-func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan GrantResourceModel
-	var state GrantResourceModel
+func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan grantResourceModel
+	var state grantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -343,7 +341,7 @@ func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	database := plan.Database.ValueString()
 	schemaName := plan.Schema.ValueString()
 	withGrantOption := plan.WithGrantOption.ValueBool()
-	objects := extractStringList(ctx, plan.Objects)
+	objects := common.StringListToSlice(ctx, plan.Objects)
 
 	// Revoke old privileges first.
 	revokeStatements := buildRevokeStatements(objectType, database, schemaName, role, objects)
@@ -357,7 +355,7 @@ func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	// Grant new privileges.
-	privileges := extractStringSet(ctx, plan.Privileges)
+	privileges := common.StringSetToSlice(ctx, plan.Privileges)
 	privList := strings.Join(privileges, ", ")
 
 	var grantOptionClause string
@@ -379,8 +377,8 @@ func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *GrantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state GrantResourceModel
+func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state grantResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -390,7 +388,7 @@ func (r *GrantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	objectType := strings.ToLower(state.ObjectType.ValueString())
 	database := state.Database.ValueString()
 	schemaName := state.Schema.ValueString()
-	objects := extractStringList(ctx, state.Objects)
+	objects := common.StringListToSlice(ctx, state.Objects)
 
 	revokeStatements := buildRevokeStatements(objectType, database, schemaName, role, objects)
 	for _, stmt := range revokeStatements {
@@ -519,32 +517,4 @@ func buildRevokeStatements(objectType, database, schemaName, role string, object
 	}
 
 	return statements
-}
-
-// extractStringSet converts a types.Set of strings into a []string.
-func extractStringSet(ctx context.Context, set types.Set) []string {
-	if set.IsNull() || set.IsUnknown() {
-		return nil
-	}
-	var result []string
-	elems := make([]types.String, 0, len(set.Elements()))
-	set.ElementsAs(ctx, &elems, false)
-	for _, e := range elems {
-		result = append(result, e.ValueString())
-	}
-	return result
-}
-
-// extractStringList converts a types.List of strings into a []string.
-func extractStringList(ctx context.Context, list types.List) []string {
-	if list.IsNull() || list.IsUnknown() {
-		return nil
-	}
-	var result []string
-	elems := make([]types.String, 0, len(list.Elements()))
-	list.ElementsAs(ctx, &elems, false)
-	for _, e := range elems {
-		result = append(result, e.ValueString())
-	}
-	return result
 }

@@ -7,6 +7,9 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	pgdatasource "github.com/DiegoBulhoes/terraform-provider-postgresql/internal/datasource"
+	pgresource "github.com/DiegoBulhoes/terraform-provider-postgresql/internal/resource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -131,25 +134,25 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 
 func (p *PostgreSQLProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewRoleResource,
-		NewDatabaseResource,
-		NewSchemaResource,
-		NewGrantResource,
-		NewDefaultPrivilegesResource,
+		pgresource.NewRoleResource,
+		pgresource.NewDatabaseResource,
+		pgresource.NewSchemaResource,
+		pgresource.NewGrantResource,
+		pgresource.NewDefaultPrivilegesResource,
 	}
 }
 
 func (p *PostgreSQLProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewRoleDataSource,
-		NewDatabaseDataSource,
-		NewSchemasDataSource,
-		NewQueryDataSource,
+		pgdatasource.NewRoleDataSource,
+		pgdatasource.NewDatabaseDataSource,
+		pgdatasource.NewSchemasDataSource,
+		pgdatasource.NewQueryDataSource,
 	}
 }
 
 func envOrDefault(val types.String, envVar, defaultVal string) string {
-	if !val.IsNull() && !val.IsUnknown() {
+	if common.IsSet(val) {
 		return val.ValueString()
 	}
 	if envVar != "" {
@@ -161,7 +164,7 @@ func envOrDefault(val types.String, envVar, defaultVal string) string {
 }
 
 func envOrDefaultInt(val types.Int64, envVar string, defaultVal int) int {
-	if !val.IsNull() && !val.IsUnknown() {
+	if common.IsSet(val) {
 		return int(val.ValueInt64())
 	}
 	if envVar != "" {
