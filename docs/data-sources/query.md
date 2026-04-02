@@ -12,13 +12,55 @@ Executes a read-only SQL query and returns the results. This data source is usef
 ## Example Usage
 
 ```terraform
-data "postgresql_query" "connections" {
-  database = "my_application"
-  query    = "SELECT usename, client_addr, state FROM pg_stat_activity WHERE datname = current_database()"
+# Query the PostgreSQL version
+data "postgresql_query" "version" {
+  database = "postgres"
+  query    = "SELECT version() AS pg_version"
 }
 
-output "active_connections" {
+output "pg_version" {
+  value = data.postgresql_query.version.rows[0]["pg_version"]
+}
+
+# List active connections per database
+data "postgresql_query" "connections" {
+  database = "postgres"
+  query    = "SELECT datname, count(*) AS count FROM pg_stat_activity GROUP BY datname ORDER BY count DESC"
+}
+
+output "connections_per_db" {
   value = data.postgresql_query.connections.rows
+}
+
+# Check table sizes in a database
+data "postgresql_query" "table_sizes" {
+  database = "my_application"
+  query    = <<-SQL
+    SELECT
+      schemaname || '.' || tablename AS table_name,
+      pg_size_pretty(pg_total_relation_size(schemaname || '.' || tablename)) AS total_size
+    FROM pg_tables
+    WHERE schemaname = 'public'
+    ORDER BY pg_total_relation_size(schemaname || '.' || tablename) DESC
+    LIMIT 10
+  SQL
+}
+
+output "largest_tables" {
+  value = data.postgresql_query.table_sizes.rows
+}
+
+# List installed extensions
+data "postgresql_query" "extensions" {
+  database = "my_application"
+  query    = "SELECT extname, extversion FROM pg_extension ORDER BY extname"
+}
+
+output "installed_extensions" {
+  value = {
+    for row in data.postgresql_query.extensions.rows :
+    row["extname"] => row["extversion"]
+  }
 }
 ```
 

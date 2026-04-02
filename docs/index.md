@@ -1,10 +1,10 @@
 ---
-page_title: "postgresql Provider"
+page_title: "PostgreSQL Provider"
 description: |-
   Terraform provider for managing PostgreSQL resources such as roles, databases, schemas, and privileges.
 ---
 
-# postgresql Provider
+# PostgreSQL Provider
 
 The PostgreSQL provider allows you to manage PostgreSQL resources such as roles, databases, schemas, grants, and default privileges.
 
