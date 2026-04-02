@@ -1,10 +1,6 @@
-# Terraform Provider PostgreSQL (In Development)
+# Terraform Provider PostgreSQL 🚧
 
-> **⚠️ NOT READY FOR PRODUCTION USE**
->
-> This provider is a **learning project** under active development. It is not published to the Terraform Registry and has no stable release. Resources, attributes, and behaviors may change or break at any time without notice.
->
-> **Do not use this in production environments.**
+> 🚧 **This provider is under active development.** Some features may change before the first stable release.
 
 Terraform provider for managing PostgreSQL resources: roles, databases, schemas, grants, and default privileges.
 
@@ -14,7 +10,7 @@ Terraform provider for managing PostgreSQL resources: roles, databases, schemas,
 - [Go](https://go.dev/dl/) >= 1.25 (for building)
 - PostgreSQL >= 12
 
-## Usage
+## Installation
 
 ```hcl
 terraform {
@@ -25,7 +21,11 @@ terraform {
     }
   }
 }
+```
 
+## Usage
+
+```hcl
 provider "postgresql" {
   host     = "localhost"
   port     = 5432
@@ -40,24 +40,22 @@ The provider also accepts configuration via environment variables: `PGHOST`, `PG
 
 ## Resources
 
-### Resources
-
 | Resource | Description |
 |---|---|
-| `postgresql_role` | Manages roles (users/groups) |
-| `postgresql_database` | Manages databases |
-| `postgresql_schema` | Manages schemas |
-| `postgresql_grant` | Manages GRANT privileges on objects |
-| `postgresql_default_privileges` | Manages ALTER DEFAULT PRIVILEGES |
+| [`postgresql_role`](docs/resources/role.md) | Manages roles (users/groups) |
+| [`postgresql_database`](docs/resources/database.md) | Manages databases |
+| [`postgresql_schema`](docs/resources/schema.md) | Manages schemas |
+| [`postgresql_grant`](docs/resources/grant.md) | Manages GRANT privileges on objects |
+| [`postgresql_default_privileges`](docs/resources/default_privileges.md) | Manages ALTER DEFAULT PRIVILEGES |
 
-### Data Sources
+## Data Sources
 
 | Data Source | Description |
 |---|---|
-| `postgresql_role` | Reads role attributes |
-| `postgresql_database` | Reads database attributes |
-| `postgresql_schemas` | Lists schemas with filters |
-| `postgresql_query` | Executes a SELECT query and returns results |
+| [`postgresql_role`](docs/data-sources/role.md) | Reads role attributes |
+| [`postgresql_database`](docs/data-sources/database.md) | Reads database attributes |
+| [`postgresql_schemas`](docs/data-sources/schemas.md) | Lists schemas with filters |
+| [`postgresql_query`](docs/data-sources/query.md) | Executes a SELECT query and returns results |
 
 ## Examples
 
@@ -121,6 +119,10 @@ data "postgresql_query" "version" {
 }
 ```
 
+## Documentation
+
+Full documentation for each resource and data source is available in the [`docs/`](docs/) directory and on the [Terraform Registry](https://registry.terraform.io/providers/DiegoBulhoes/postgresql/latest/docs).
+
 ## Development
 
 ### Build
@@ -144,30 +146,36 @@ make testacc-cover
 make cover-html
 ```
 
-See [docs/testing.md](docs/testing.md) for more details.
+See [TESTING.md](TESTING.md) for more details.
+
+### Generate documentation
+
+```bash
+# Install tfplugindocs
+go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
+
+# Generate docs from templates and schema
+make docs
+```
+
+Documentation is generated from templates in `templates/` and examples in `examples/`. Do not edit files in `docs/` directly.
 
 ### Project structure
 
 ```
 .
-├── main.go                            # Provider entrypoint
-├── internal/provider/
-│   ├── provider.go                    # Provider configuration
-│   ├── role_resource.go               # Resource: postgresql_role
-│   ├── database_resource.go           # Resource: postgresql_database
-│   ├── schema_resource.go             # Resource: postgresql_schema
-│   ├── grant_resource.go              # Resource: postgresql_grant
-│   ├── default_privileges_resource.go # Resource: postgresql_default_privileges
-│   ├── role_data_source.go            # Data Source: postgresql_role
-│   ├── database_data_source.go        # Data Source: postgresql_database
-│   ├── schemas_data_source.go         # Data Source: postgresql_schemas
-│   ├── query_data_source.go           # Data Source: postgresql_query
-│   └── *_test.go                      # 58 acceptance tests
-├── docs/
-│   └── testing.md                     # Testing documentation
+├── main.go                              # Provider entrypoint
+├── internal/
+│   ├── provider/provider.go             # Provider configuration
+│   ├── resource/                        # Resources
+│   ├── datasource/                      # Data Sources
+│   └── common/                          # Shared helpers
+├── docs/                                # Generated documentation (do not edit)
+├── templates/                           # Documentation templates
+├── examples/                            # HCL examples used in docs
 └── .github/workflows/
-    ├── test.yml                       # CI: lint + tests
-    └── release.yml                    # CD: GoReleaser
+    ├── test.yml                         # CI: lint + tests
+    └── release.yml                      # CD: GoReleaser
 ```
 
 ## License

@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Reads information about a PostgreSQL database.
+---
+
+# {{.Type}} ({{.Name}})
+
+Reads information about an existing PostgreSQL database.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_database/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

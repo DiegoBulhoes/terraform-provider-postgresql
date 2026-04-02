@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Executes a read-only SQL query and returns the results.
+---
+
+# {{.Type}} ({{.Name}})
+
+Executes a read-only SQL query and returns the results. This data source is useful for querying PostgreSQL catalog tables or running custom read-only queries.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_query/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

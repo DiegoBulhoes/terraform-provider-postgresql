@@ -1,0 +1,24 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Manages a PostgreSQL database.
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages a PostgreSQL database.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_database/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Databases can be imported using the database name:
+
+```shell
+terraform import postgresql_database.mydb my_application
+```

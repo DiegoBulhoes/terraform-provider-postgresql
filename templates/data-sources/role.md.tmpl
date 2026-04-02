@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Reads information about a PostgreSQL role.
+---
+
+# {{.Type}} ({{.Name}})
+
+Reads information about an existing PostgreSQL role.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_role/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

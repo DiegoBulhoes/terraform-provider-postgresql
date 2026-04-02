@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Manages PostgreSQL default privileges using ALTER DEFAULT PRIVILEGES.
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages PostgreSQL default privileges using `ALTER DEFAULT PRIVILEGES`. Default privileges define the privileges that will be applied to objects created in the future by a specific role.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_default_privileges/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

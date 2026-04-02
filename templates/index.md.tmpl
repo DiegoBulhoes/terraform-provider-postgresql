@@ -1,0 +1,31 @@
+---
+page_title: "{{.ProviderShortName}} Provider"
+description: |-
+  Terraform provider for managing PostgreSQL resources such as roles, databases, schemas, and privileges.
+---
+
+# {{.ProviderShortName}} Provider
+
+The PostgreSQL provider allows you to manage PostgreSQL resources such as roles, databases, schemas, grants, and default privileges.
+
+## Example Usage
+
+{{tffile "examples/provider/provider.tf"}}
+
+## Authentication
+
+The provider supports configuration via attributes or environment variables:
+
+| Attribute         | Environment Variable | Default     |
+|-------------------|----------------------|-------------|
+| `host`            | `PGHOST`             | `localhost` |
+| `port`            | `PGPORT`             | `5432`      |
+| `username`        | `PGUSER`             | `postgres`  |
+| `password`        | `PGPASSWORD`         | (empty)     |
+| `database`        | `PGDATABASE`         | `postgres`  |
+| `sslmode`         | `PGSSLMODE`          | `prefer`    |
+| `connect_timeout` | —                    | `30`        |
+
+Environment variables are used as fallback when the corresponding attribute is not set.
+
+{{ .SchemaMarkdown | trimspace }}

@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html
+.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs docs-validate
 
 BINARY_NAME=terraform-provider-postgresql
 GO=go
@@ -39,3 +39,9 @@ clean:
 
 tidy:
 	$(GO) mod tidy
+
+docs:
+	tfplugindocs generate
+
+docs-validate:
+	tfplugindocs validate

@@ -1,0 +1,25 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Manages a PostgreSQL schema.
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages a PostgreSQL schema.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_schema/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Schemas can be imported using the schema name or `database/schema_name` format:
+
+```shell
+terraform import postgresql_schema.app app_schema
+terraform import postgresql_schema.app my_database/app_schema
+```
