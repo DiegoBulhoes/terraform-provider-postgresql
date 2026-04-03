@@ -15,9 +15,58 @@ permissions:
   contents: write
 
 jobs:
-  test:
-    name: Test before release
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)" || (echo "Run 'make fmt'" && exit 1)
+
+      - name: Run golangci-lint
+        run: go tool golangci-lint run ./...
+
+      - name: Validate documentation
+        run: go tool tfplugindocs validate
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [checks]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests
+        run: go test -race ./...
+
+  acceptance:
+    name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
+    runs-on: ubuntu-latest
+    needs: [unit]
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres_version: ["14", "15", "16", "17"]
     steps:
       - uses: actions/checkout@v6
 
@@ -28,12 +77,13 @@ jobs:
       - name: Run acceptance tests
         env:
           TF_ACC: "1"
-        run: go test -timeout 600s ./...
+          POSTGRES_IMAGE: "postgres:${{ matrix.postgres_version }}-alpine"
+        run: go test -tags integration -timeout 600s ./...
 
   goreleaser:
     name: GoReleaser
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [acceptance]
     steps:
       - uses: actions/checkout@v6
         with:
