@@ -47,3 +47,25 @@ func TestAccPostgresqlExtensionsDataSource_withDatabase(t *testing.T) {
 		},
 	})
 }
+
+// Example-based test: validate documentation example from examples/data-sources/postgresql_extensions/data-source.tf
+
+func TestAccPostgresqlExtensionsDataSource_exampleAll(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_extensions" "all" {}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// plpgsql is always installed
+					resource.TestCheckResourceAttrSet("data.postgresql_extensions.all", "extensions.#"),
+					resource.TestCheckResourceAttrSet("data.postgresql_extensions.all", "extensions.0.name"),
+					resource.TestCheckResourceAttrSet("data.postgresql_extensions.all", "extensions.0.version"),
+				),
+			},
+		},
+	})
+}

@@ -62,3 +62,30 @@ func TestAccPostgresqlVersionDataSource_verifyAttributes(t *testing.T) {
 		},
 	})
 }
+
+// Example-based test: validate documentation example from examples/data-sources/postgresql_version/data-source.tf
+
+func TestAccPostgresqlVersionDataSource_exampleCurrent(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_version" "current" {}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestMatchResourceAttr(
+						"data.postgresql_version.current", "version",
+						regexp.MustCompile(`PostgreSQL`),
+					),
+					// major version should be >= 14
+					resource.TestMatchResourceAttr(
+						"data.postgresql_version.current", "major",
+						regexp.MustCompile(`^(1[4-9]|[2-9]\d)$`),
+					),
+				),
+			},
+		},
+	})
+}

@@ -156,3 +156,27 @@ func TestAccPostgresqlTablesDataSource_combinedFilters(t *testing.T) {
 		},
 	})
 }
+
+// Example-based test: validate documentation example from examples/data-sources/postgresql_tables/data-source.tf
+
+func TestAccPostgresqlTablesDataSource_examplePublicSchema(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_tables" "public" {
+  schema = "information_schema"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// information_schema always contains system tables
+					resource.TestCheckResourceAttrSet("data.postgresql_tables.public", "tables.#"),
+					resource.TestCheckResourceAttrSet("data.postgresql_tables.public", "tables.0.name"),
+					resource.TestCheckResourceAttr("data.postgresql_tables.public", "tables.0.schema", "information_schema"),
+				),
+			},
+		},
+	})
+}

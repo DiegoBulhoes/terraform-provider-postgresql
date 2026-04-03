@@ -427,6 +427,39 @@ resource "postgresql_database" "test" {
 `, name, allowConn, isTemplate, connLimit)
 }
 
+// Example-based test: validate import workflow from examples/resources/postgresql_database/import.sh
+
+func TestAccPostgresqlDatabase_exampleImport(t *testing.T) {
+	rName := "acctest_db_ex_imp"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "postgresql_database" "mydb" {
+  name = %q
+}
+`, rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("postgresql_database.mydb", "name", rName),
+					resource.TestCheckResourceAttrSet("postgresql_database.mydb", "owner"),
+					resource.TestCheckResourceAttrSet("postgresql_database.mydb", "encoding"),
+				),
+			},
+			{
+				ResourceName:                         "postgresql_database.mydb",
+				ImportState:                          true,
+				ImportStateId:                        rName,
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "name",
+			},
+		},
+	})
+}
+
 func testAccPostgresqlDatabaseConfig_forUpdate(name, owner1, owner2 string, useOwner2 bool, connLimit int) string {
 	ownerRef := "postgresql_role.owner1.name"
 	if useOwner2 {

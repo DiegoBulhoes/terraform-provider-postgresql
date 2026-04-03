@@ -257,3 +257,128 @@ func TestAccPostgresqlQueryDataSource_readOnlyProtection(t *testing.T) {
 		},
 	})
 }
+
+func TestAccPostgresqlQueryDataSource_allowDestructive(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				resource "postgresql_role" "test" { name = "acctest_query_destr" }
+
+				data "postgresql_query" "test" {
+					database          = "postgres"
+					query             = "DELETE FROM pg_catalog.pg_description WHERE objoid = 0 AND classoid = 0 AND objsubid = -99999 RETURNING objoid"
+					allow_destructive = true
+				}`,
+				Check: resource.TestCheckResourceAttr("data.postgresql_query.test", "rows.#", "0"),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlQueryDataSource_allowDestructiveBlocked(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				data "postgresql_query" "test" {
+					database = "postgres"
+					query    = "DELETE FROM pg_description WHERE objoid = 0"
+				}`,
+				ExpectError: regexp.MustCompile(`Only SELECT queries are allowed`),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlQueryDataSource_allowDestructiveFalse(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				data "postgresql_query" "test" {
+					database          = "postgres"
+					query             = "DELETE FROM pg_description WHERE objoid = 0"
+					allow_destructive = false
+				}`,
+				ExpectError: regexp.MustCompile(`Only SELECT queries are allowed`),
+			},
+		},
+	})
+}
+
+// Example-based tests: validate documentation examples from examples/data-sources/postgresql_query/data-source.tf
+
+func TestAccPostgresqlQueryDataSource_exampleVersion(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_query" "version" {
+  database = "postgres"
+  query    = "SELECT version() AS pg_version"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.postgresql_query.version", "rows.#", "1"),
+					resource.TestMatchResourceAttr(
+						"data.postgresql_query.version", "rows.0.pg_version",
+						regexp.MustCompile(`PostgreSQL`),
+					),
+				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlQueryDataSource_exampleConnections(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_query" "connections" {
+  database = "postgres"
+  query    = "SELECT datname, count(*)::text AS count FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname ORDER BY count DESC"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.postgresql_query.connections", "rows.#"),
+					resource.TestCheckResourceAttrSet("data.postgresql_query.connections", "rows.0.count"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlQueryDataSource_exampleExtensions(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_query" "extensions" {
+  database = "postgres"
+  query    = "SELECT extname, extversion FROM pg_extension ORDER BY extname"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.postgresql_query.extensions", "rows.#"),
+					// plpgsql is always installed, so at least one row
+					resource.TestCheckResourceAttrSet("data.postgresql_query.extensions", "rows.0.extname"),
+					resource.TestCheckResourceAttrSet("data.postgresql_query.extensions", "rows.0.extversion"),
+				),
+			},
+		},
+	})
+}

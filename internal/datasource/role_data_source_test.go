@@ -157,3 +157,27 @@ func TestAccPostgresqlRoleDataSource_nonExistent(t *testing.T) {
 		},
 	})
 }
+
+// Example-based test: validate documentation example from examples/data-sources/postgresql_role/data-source.tf
+
+func TestAccPostgresqlRoleDataSource_exampleAdmin(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_role" "admin" {
+  name = "postgres"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.postgresql_role.admin", "name", "postgres"),
+					resource.TestCheckResourceAttr("data.postgresql_role.admin", "superuser", "true"),
+					resource.TestCheckResourceAttr("data.postgresql_role.admin", "login", "true"),
+					resource.TestCheckResourceAttrSet("data.postgresql_role.admin", "oid"),
+				),
+			},
+		},
+	})
+}

@@ -174,3 +174,32 @@ func TestAccPostgresqlSchemasDataSource_emptyResult(t *testing.T) {
 		},
 	})
 }
+
+// Example-based test: validate documentation example from examples/data-sources/postgresql_schemas/data-source.tf
+
+func TestAccPostgresqlSchemasDataSource_exampleUserSchemas(t *testing.T) {
+	rSchema := "acctest_schemas_ex_user"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "postgresql_schema" "test" {
+  name = %q
+}
+
+data "postgresql_schemas" "user_schemas" {
+  include_system_schemas = false
+  depends_on             = [postgresql_schema.test]
+}
+`, rSchema),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// At least the schema we just created plus public
+					resource.TestCheckResourceAttrSet("data.postgresql_schemas.user_schemas", "schemas.#"),
+				),
+			},
+		},
+	})
+}

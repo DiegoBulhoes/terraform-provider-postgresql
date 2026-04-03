@@ -673,3 +673,37 @@ resource "postgresql_role" "test" {
 }
 `, name)
 }
+
+// Example-based test: validate import workflow from examples/resources/postgresql_role/import.sh
+
+func TestAccPostgresqlRole_exampleImport(t *testing.T) {
+	rName := "acctest_role_ex_imp"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy:             testAccCheckPostgresqlRoleDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "postgresql_role" "app" {
+  name  = %q
+  login = true
+}
+`, rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("postgresql_role.app", "name", rName),
+					resource.TestCheckResourceAttr("postgresql_role.app", "login", "true"),
+				),
+			},
+			{
+				ResourceName:                         "postgresql_role.app",
+				ImportState:                          true,
+				ImportStateId:                        rName,
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "name",
+				ImportStateVerifyIgnore:              []string{"password"},
+			},
+		},
+	})
+}

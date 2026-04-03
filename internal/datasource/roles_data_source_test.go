@@ -90,3 +90,45 @@ func TestAccPostgresqlRolesDataSource_notLikePattern(t *testing.T) {
 		},
 	})
 }
+
+// Example-based tests: validate documentation examples from examples/data-sources/postgresql_roles/data-source.tf
+
+func TestAccPostgresqlRolesDataSource_exampleLoginOnly(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_roles" "login_roles" {
+  login_only = true
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// At least the postgres superuser has login
+					resource.TestCheckResourceAttrSet("data.postgresql_roles.login_roles", "roles.#"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlRolesDataSource_exampleNotLikePattern(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_roles" "custom_roles" {
+  not_like_pattern = "pg_%"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// At least postgres role exists and doesn't start with pg_
+					resource.TestCheckResourceAttrSet("data.postgresql_roles.custom_roles", "roles.#"),
+				),
+			},
+		},
+	})
+}
