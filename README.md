@@ -146,7 +146,8 @@ make build
 Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker. Requires Docker running.
 
 ```bash
-make testacc          # Run all tests (unit + acceptance)
+make test             # Unit tests only (no Docker needed)
+make testacc          # Acceptance tests (PG 14, 15, 16, 17)
 make testacc-cover    # With coverage
 make cover-html       # Generate HTML coverage report
 ```

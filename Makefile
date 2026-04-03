@@ -13,8 +13,14 @@ install:
 test:
 	$(GO) test -v -race ./...
 
+PG_VERSIONS ?= 14 15 16 17
+
 testacc:
-	TF_ACC=1 $(GO) test -tags integration -v -timeout 600s ./...
+	@for v in $(PG_VERSIONS); do \
+		echo "=== PostgreSQL $$v ==="; \
+		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 $(GO) test -tags integration -v -timeout 600s -count=1 -parallel 4 ./... || exit 1; \
+		echo ""; \
+	done
 
 testacc-cover:
 	TF_ACC=1 $(GO) test -tags integration -timeout 600s -coverprofile=coverage.out ./...

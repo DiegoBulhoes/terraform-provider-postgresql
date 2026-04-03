@@ -2,37 +2,32 @@
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Docker (for testcontainers)
 
 ## How it works
 
-Acceptance tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to spin up a PostgreSQL 16 container automatically. No manual database setup is needed.
+Acceptance tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to spin up a PostgreSQL container automatically. No manual database setup is needed.
+
+Acceptance tests are guarded by `//go:build integration` — they only compile with `-tags integration`. This keeps `govulncheck` clean from test-only dependencies (testcontainers/docker).
 
 If `PGHOST` is already set, the container is skipped and tests use the external database.
 
 ## Running tests
 
 ```bash
-# All tests (unit + acceptance)
-TF_ACC=1 go test ./... -timeout 600s
-
 # Unit tests only (no Docker needed)
-go test ./...
+make test
 
-# Specific test
-TF_ACC=1 go test ./internal/resource/ -run "TestAccPostgresqlRole_basic"
-
-# Using Makefile
+# Acceptance tests (PG 14, 15, 16, 17 sequentially)
 make testacc
-```
 
-## Coverage
+# Acceptance tests for specific PG versions
+make testacc PG_VERSIONS="16 17"
 
-```bash
-TF_ACC=1 go test ./... -timeout 600s -coverprofile=coverage.out
-go tool cover -func=coverage.out
-go tool cover -html=coverage.out -o coverage.html
+# With coverage
+make testacc-cover
+make cover-html
 ```
 
 ## Test structure
@@ -40,7 +35,7 @@ go tool cover -html=coverage.out -o coverage.html
 Tests are co-located with source files. Each package has:
 
 - **Unit tests** (`go-sqlmock`) — error paths, no DB needed
-- **Acceptance tests** (`TF_ACC=1`) — full flow with real PostgreSQL
+- **Acceptance tests** (`-tags integration`) — full flow with real PostgreSQL
 
 ```
 internal/
@@ -52,15 +47,17 @@ internal/
 
 ## Environment variables
 
-| Variable       | Default        | Description                                     |
-| -------------- | -------------- | ----------------------------------------------- |
-| `TF_ACC`       | —              | Required for acceptance tests                   |
-| `PGHOST`       | (auto)         | PostgreSQL host. If set, skips testcontainer     |
-| `PGPORT`       | (auto)         | PostgreSQL port                                 |
-| `PGUSER`       | `postgres`     | Username                                        |
-| `PGPASSWORD`   | `postgres`     | Password                                        |
-| `PGDATABASE`   | `postgres`     | Default database                                |
-| `PGSSLMODE`    | `disable`      | SSL mode                                        |
+| Variable         | Default    | Description                                 |
+| ---------------- | ---------- | ------------------------------------------- |
+| `TF_ACC`         | —          | Required for acceptance tests               |
+| `PG_VERSIONS`    | `14 15 16 17` | PostgreSQL versions to test (Makefile)   |
+| `POSTGRES_IMAGE` | `postgres:16-alpine` | Container image override           |
+| `PGHOST`         | (auto)     | PostgreSQL host. If set, skips testcontainer |
+| `PGPORT`         | (auto)     | PostgreSQL port                             |
+| `PGUSER`         | `postgres` | Username                                    |
+| `PGPASSWORD`     | `postgres` | Password                                    |
+| `PGDATABASE`     | `postgres` | Default database                            |
+| `PGSSLMODE`      | `disable`  | SSL mode                                    |
 
 ## Troubleshooting
 
