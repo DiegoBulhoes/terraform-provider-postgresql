@@ -75,7 +75,9 @@ func newImportReqResp(ctx context.Context, s rschema.Schema, id string) (resourc
 }
 
 // hasDiagSummary checks whether resp diagnostics contain the given summary.
-func hasDiagSummary(diags interface{ Errors() []interface{ Summary() string } }, summary string) bool {
+func hasDiagSummary(diags interface {
+	Errors() []interface{ Summary() string }
+}, summary string) bool {
 	for _, d := range diags.Errors() {
 		if d.Summary() == summary {
 			return true
