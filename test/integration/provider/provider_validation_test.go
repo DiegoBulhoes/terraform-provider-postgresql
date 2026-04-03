@@ -1,13 +1,13 @@
 //go:build integration
 
 // Tests for provider configuration validation and full stack integration.
-package provider
+package provider_test
 
 import (
 	"regexp"
 	"testing"
 
-	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
@@ -56,59 +56,52 @@ func TestAccPostgresql_fullStack(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: `
-				resource "postgresql_role" "owner" {
+				resource "postgresql_user" "owner" {
 					name            = "acctest_fullstack_owner"
-					login           = true
+					password        = "ownerpass"
 					create_database = true
 				}
 
 				resource "postgresql_role" "reader" {
-					name  = "acctest_fullstack_reader"
-					login = false
+					name = "acctest_fullstack_reader"
 				}
 
-				resource "postgresql_role" "app" {
+				resource "postgresql_user" "app" {
 					name     = "acctest_fullstack_app"
-					login    = true
 					password = "apppass"
 					roles    = [postgresql_role.reader.name]
 				}
 
 				resource "postgresql_database" "app" {
 					name  = "acctest_fullstack_db"
-					owner = postgresql_role.owner.name
+					owner = postgresql_user.owner.name
 				}
 
 				resource "postgresql_schema" "api" {
 					name  = "api"
-					owner = postgresql_role.owner.name
+					owner = postgresql_user.owner.name
 				}
 
 				resource "postgresql_grant" "db_connect" {
-					role        = postgresql_role.app.name
+					role        = postgresql_user.app.name
 					object_type = "database"
 					database    = postgresql_database.app.name
 					privileges  = ["CONNECT"]
 				}
 
 				resource "postgresql_grant" "schema_usage" {
-					role        = postgresql_role.app.name
+					role        = postgresql_user.app.name
 					object_type = "schema"
 					schema      = postgresql_schema.api.name
 					privileges  = ["USAGE"]
 				}
 
-				resource "postgresql_default_privileges" "tables" {
-					owner       = postgresql_role.owner.name
-					role        = postgresql_role.reader.name
-					database    = postgresql_database.app.name
-					schema      = postgresql_schema.api.name
-					object_type = "table"
-					privileges  = ["SELECT"]
+				data "postgresql_role" "reader" {
+					name = postgresql_role.reader.name
 				}
 
-				data "postgresql_role" "owner" {
-					name = postgresql_role.owner.name
+				data "postgresql_user" "owner" {
+					name = postgresql_user.owner.name
 				}
 
 				data "postgresql_database" "app" {
@@ -120,14 +113,13 @@ func TestAccPostgresql_fullStack(t *testing.T) {
 				}
 				`,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("postgresql_role.owner", "create_database", "true"),
-					resource.TestCheckResourceAttr("postgresql_role.app", "roles.#", "1"),
+					resource.TestCheckResourceAttr("postgresql_user.owner", "create_database", "true"),
+					resource.TestCheckResourceAttr("postgresql_user.app", "roles.#", "1"),
 					resource.TestCheckResourceAttr("postgresql_database.app", "name", "acctest_fullstack_db"),
 					resource.TestCheckResourceAttr("postgresql_schema.api", "name", "api"),
 					resource.TestCheckResourceAttr("postgresql_grant.db_connect", "privileges.#", "1"),
 					resource.TestCheckResourceAttr("postgresql_grant.schema_usage", "privileges.#", "1"),
-					resource.TestCheckResourceAttr("postgresql_default_privileges.tables", "object_type", "table"),
-					resource.TestCheckResourceAttr("data.postgresql_role.owner", "create_database", "true"),
+					resource.TestCheckResourceAttr("data.postgresql_user.owner", "create_database", "true"),
 					resource.TestCheckResourceAttrSet("data.postgresql_database.app", "oid"),
 				),
 			},

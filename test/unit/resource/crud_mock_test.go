@@ -1,16 +1,25 @@
-package resource
+package resource_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/resource"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/mocks"
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"go.uber.org/mock/gomock"
 )
+
+// mockResult implements sql.Result for ExecContext returns.
+type mockResult struct{}
+
+func (r mockResult) LastInsertId() (int64, error) { return 0, nil }
+func (r mockResult) RowsAffected() (int64, error) { return 0, nil }
 
 // ---------------------------------------------------------------------------
 // Helpers to build request/response objects
@@ -22,53 +31,53 @@ var timeoutsObjectType = tftypes.Object{AttributeTypes: map[string]tftypes.Type{
 	"delete": tftypes.String,
 }}
 
-func newCreateReqResp(ctx context.Context, s rschema.Schema, planVal tftypes.Value) (resource.CreateRequest, *resource.CreateResponse) {
+func newCreateReqResp(ctx context.Context, s rschema.Schema, planVal tftypes.Value) (fwresource.CreateRequest, *fwresource.CreateResponse) {
 	tfType := s.Type().TerraformType(ctx)
-	req := resource.CreateRequest{
+	req := fwresource.CreateRequest{
 		Plan: tfsdk.Plan{Raw: planVal, Schema: s},
 	}
-	resp := &resource.CreateResponse{
+	resp := &fwresource.CreateResponse{
 		State: tfsdk.State{Raw: tftypes.NewValue(tfType, nil), Schema: s},
 	}
 	return req, resp
 }
 
-func newReadReqResp(ctx context.Context, s rschema.Schema, stateVal tftypes.Value) (resource.ReadRequest, *resource.ReadResponse) {
-	req := resource.ReadRequest{
+func newReadReqResp(ctx context.Context, s rschema.Schema, stateVal tftypes.Value) (fwresource.ReadRequest, *fwresource.ReadResponse) {
+	req := fwresource.ReadRequest{
 		State: tfsdk.State{Raw: stateVal, Schema: s},
 	}
-	resp := &resource.ReadResponse{
+	resp := &fwresource.ReadResponse{
 		State: tfsdk.State{Raw: stateVal, Schema: s},
 	}
 	return req, resp
 }
 
-func newUpdateReqResp(ctx context.Context, s rschema.Schema, planVal, stateVal tftypes.Value) (resource.UpdateRequest, *resource.UpdateResponse) {
+func newUpdateReqResp(ctx context.Context, s rschema.Schema, planVal, stateVal tftypes.Value) (fwresource.UpdateRequest, *fwresource.UpdateResponse) {
 	tfType := s.Type().TerraformType(ctx)
-	req := resource.UpdateRequest{
+	req := fwresource.UpdateRequest{
 		Plan:  tfsdk.Plan{Raw: planVal, Schema: s},
 		State: tfsdk.State{Raw: stateVal, Schema: s},
 	}
-	resp := &resource.UpdateResponse{
+	resp := &fwresource.UpdateResponse{
 		State: tfsdk.State{Raw: tftypes.NewValue(tfType, nil), Schema: s},
 	}
 	return req, resp
 }
 
-func newDeleteReqResp(_ context.Context, s rschema.Schema, stateVal tftypes.Value) (resource.DeleteRequest, *resource.DeleteResponse) {
-	req := resource.DeleteRequest{
+func newDeleteReqResp(_ context.Context, s rschema.Schema, stateVal tftypes.Value) (fwresource.DeleteRequest, *fwresource.DeleteResponse) {
+	req := fwresource.DeleteRequest{
 		State: tfsdk.State{Raw: stateVal, Schema: s},
 	}
-	resp := &resource.DeleteResponse{
+	resp := &fwresource.DeleteResponse{
 		State: tfsdk.State{Raw: stateVal, Schema: s},
 	}
 	return req, resp
 }
 
-func newImportReqResp(ctx context.Context, s rschema.Schema, id string) (resource.ImportStateRequest, *resource.ImportStateResponse) {
+func newImportReqResp(ctx context.Context, s rschema.Schema, id string) (fwresource.ImportStateRequest, *fwresource.ImportStateResponse) {
 	tfType := s.Type().TerraformType(ctx)
-	req := resource.ImportStateRequest{ID: id}
-	resp := &resource.ImportStateResponse{
+	req := fwresource.ImportStateRequest{ID: id}
+	resp := &fwresource.ImportStateResponse{
 		State: tfsdk.State{Raw: tftypes.NewValue(tfType, nil), Schema: s},
 	}
 	return req, resp
@@ -91,9 +100,9 @@ func hasDiagSummary(diags interface {
 // ---------------------------------------------------------------------------
 
 func databaseResourceSchema() rschema.Schema {
-	r := &databaseResource{}
-	sresp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, sresp)
+	r := &resource.DatabaseResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
 	return sresp.Schema
 }
 
@@ -133,32 +142,22 @@ func databaseStateValue(ctx context.Context, s rschema.Schema, name, owner, temp
 	})
 }
 
-func databaseReadRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{
-		"oid", "owner", "encoding", "lc_collate", "lc_ctype",
-		"allow_connections", "connection_limit", "is_template", "tablespace_name",
-	})
-}
-
 // ---------------------------------------------------------------------------
 // databaseResource tests
 // ---------------------------------------------------------------------------
 
 func TestDatabaseResource_Create_execError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("CREATE DATABASE").WillReturnError(fmt.Errorf("permission denied"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("permission denied"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	plan := databasePlanValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, true, false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -173,27 +172,23 @@ func TestDatabaseResource_Create_execError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error creating database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Create_readError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectExec("CREATE DATABASE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	plan := databasePlanValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, true, false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -208,28 +203,22 @@ func TestDatabaseResource_Create_readError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Read_notFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	// Return empty rows to trigger sql.ErrNoRows on QueryRowContext.Scan
-	rows := databaseReadRows()
-	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -238,26 +227,22 @@ func TestDatabaseResource_Read_notFound(t *testing.T) {
 	if !resp.State.Raw.IsNull() {
 		t.Error("expected state to be removed (null) when database not found")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Read_queryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("connection refused"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection refused"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -272,19 +257,13 @@ func TestDatabaseResource_Read_queryError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Update_ownerChangeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("ALTER DATABASE").WillReturnError(fmt.Errorf("role does not exist"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role does not exist"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
@@ -292,7 +271,7 @@ func TestDatabaseResource_Update_ownerChangeError(t *testing.T) {
 	state := databaseStateValue(ctx, s, "testdb", "oldowner", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -307,20 +286,14 @@ func TestDatabaseResource_Update_ownerChangeError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error updating database owner' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Update_tablespaceError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// Owner is the same, so no owner ALTER. Tablespace change triggers error.
-	mock.ExpectExec("ALTER DATABASE.*SET TABLESPACE").WillReturnError(fmt.Errorf("tablespace not found"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("tablespace not found"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
@@ -328,7 +301,7 @@ func TestDatabaseResource_Update_tablespaceError(t *testing.T) {
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -343,20 +316,14 @@ func TestDatabaseResource_Update_tablespaceError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error updating database tablespace' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Update_withOptsError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// Owner same, tablespace same, connection_limit changes -> ALTER DATABASE ... WITH
-	mock.ExpectExec("ALTER DATABASE.*WITH").WillReturnError(fmt.Errorf("syntax error"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("syntax error"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
@@ -364,7 +331,7 @@ func TestDatabaseResource_Update_withOptsError(t *testing.T) {
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -379,27 +346,21 @@ func TestDatabaseResource_Update_withOptsError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error updating database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Delete_templateUnsetError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// is_template=true => ALTER DATABASE ... IS_TEMPLATE = false first
-	mock.ExpectExec("ALTER DATABASE").WillReturnError(fmt.Errorf("cannot alter"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot alter"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, true)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -414,27 +375,21 @@ func TestDatabaseResource_Delete_templateUnsetError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error disabling template on database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestDatabaseResource_Delete_dropError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// is_template=false so no ALTER needed, go straight to DROP
-	mock.ExpectExec("DROP DATABASE").WillReturnError(fmt.Errorf("database is being accessed"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("database is being accessed"))
 
 	ctx := context.Background()
 	s := databaseResourceSchema()
 	state := databaseStateValue(ctx, s, "testdb", "postgres", "template0", "UTF8", "en_US.UTF-8", "en_US.UTF-8", "pg_default", -1, 12345, true, false)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &databaseResource{db: db}
+	r := &resource.DatabaseResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -449,9 +404,6 @@ func TestDatabaseResource_Delete_dropError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error deleting database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -459,99 +411,99 @@ func TestDatabaseResource_Delete_dropError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func roleResourceSchema() rschema.Schema {
-	r := &roleResource{}
-	sresp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, sresp)
+	r := &resource.RoleResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
 	return sresp.Schema
 }
 
-func rolePlanValue(ctx context.Context, s rschema.Schema, name string, login, superuser, createDB, createRole, replication bool, connLimit int64) tftypes.Value {
+var privilegeObjectType = tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+	"privileges":  tftypes.Set{ElementType: tftypes.String},
+	"object_type": tftypes.String,
+	"schema":      tftypes.String,
+	"database":    tftypes.String,
+	"objects":     tftypes.List{ElementType: tftypes.String},
+}}
+
+var privilegeListType = tftypes.List{ElementType: privilegeObjectType}
+
+func rolePlanValue(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit int64) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"name":             tftypes.NewValue(tftypes.String, name),
-		"password":         tftypes.NewValue(tftypes.String, nil),
-		"login":            tftypes.NewValue(tftypes.Bool, login),
 		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
 		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
 		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
 		"replication":      tftypes.NewValue(tftypes.Bool, replication),
 		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
-		"valid_until":      tftypes.NewValue(tftypes.String, nil),
-		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"privilege":        tftypes.NewValue(privilegeListType, []tftypes.Value{}),
 		"oid":              tftypes.NewValue(tftypes.Number, nil),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
 }
 
-func rolePlanValueWithRoles(ctx context.Context, s rschema.Schema, name string, login, superuser, createDB, createRole, replication bool, connLimit int64, roles []string) tftypes.Value {
+func rolePlanValueWithPrivilege(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit int64, privObjectType, schemaName string, privs []string) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
-	var roleVals []tftypes.Value
-	for _, r := range roles {
-		roleVals = append(roleVals, tftypes.NewValue(tftypes.String, r))
+	var privVals []tftypes.Value
+	for _, p := range privs {
+		privVals = append(privVals, tftypes.NewValue(tftypes.String, p))
 	}
-	var rolesVal tftypes.Value
-	if roleVals != nil {
-		rolesVal = tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, roleVals)
-	} else {
-		rolesVal = tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{})
-	}
+	privBlock := tftypes.NewValue(privilegeObjectType, map[string]tftypes.Value{
+		"privileges":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, privVals),
+		"object_type": tftypes.NewValue(tftypes.String, privObjectType),
+		"schema":      tftypes.NewValue(tftypes.String, schemaName),
+		"database":    tftypes.NewValue(tftypes.String, nil),
+		"objects":     tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+	})
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"name":             tftypes.NewValue(tftypes.String, name),
-		"password":         tftypes.NewValue(tftypes.String, nil),
-		"login":            tftypes.NewValue(tftypes.Bool, login),
 		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
 		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
 		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
 		"replication":      tftypes.NewValue(tftypes.Bool, replication),
 		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
-		"valid_until":      tftypes.NewValue(tftypes.String, nil),
-		"roles":            rolesVal,
+		"privilege":        tftypes.NewValue(privilegeListType, []tftypes.Value{privBlock}),
 		"oid":              tftypes.NewValue(tftypes.Number, nil),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
 }
 
-func roleStateValue(ctx context.Context, s rschema.Schema, name string, login, superuser, createDB, createRole, replication bool, connLimit, oid int64) tftypes.Value {
+func roleStateValue(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit, oid int64) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"name":             tftypes.NewValue(tftypes.String, name),
-		"password":         tftypes.NewValue(tftypes.String, nil),
-		"login":            tftypes.NewValue(tftypes.Bool, login),
 		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
 		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
 		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
 		"replication":      tftypes.NewValue(tftypes.Bool, replication),
 		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
-		"valid_until":      tftypes.NewValue(tftypes.String, nil),
-		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"privilege":        tftypes.NewValue(privilegeListType, []tftypes.Value{}),
 		"oid":              tftypes.NewValue(tftypes.Number, oid),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
 }
 
-func roleStateValueWithRoles(ctx context.Context, s rschema.Schema, name string, login, superuser, createDB, createRole, replication bool, connLimit, oid int64, roles []string) tftypes.Value {
+func roleStateValueWithPrivilege(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit, oid int64, privObjectType, schemaName string, privs []string) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
-	var roleVals []tftypes.Value
-	for _, r := range roles {
-		roleVals = append(roleVals, tftypes.NewValue(tftypes.String, r))
+	var privVals []tftypes.Value
+	for _, p := range privs {
+		privVals = append(privVals, tftypes.NewValue(tftypes.String, p))
 	}
-	var rolesVal tftypes.Value
-	if roleVals != nil {
-		rolesVal = tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, roleVals)
-	} else {
-		rolesVal = tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{})
-	}
+	privBlock := tftypes.NewValue(privilegeObjectType, map[string]tftypes.Value{
+		"privileges":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, privVals),
+		"object_type": tftypes.NewValue(tftypes.String, privObjectType),
+		"schema":      tftypes.NewValue(tftypes.String, schemaName),
+		"database":    tftypes.NewValue(tftypes.String, nil),
+		"objects":     tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+	})
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
 		"name":             tftypes.NewValue(tftypes.String, name),
-		"password":         tftypes.NewValue(tftypes.String, nil),
-		"login":            tftypes.NewValue(tftypes.Bool, login),
 		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
 		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
 		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
 		"replication":      tftypes.NewValue(tftypes.Bool, replication),
 		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
-		"valid_until":      tftypes.NewValue(tftypes.String, nil),
-		"roles":            rolesVal,
+		"privilege":        tftypes.NewValue(privilegeListType, []tftypes.Value{privBlock}),
 		"oid":              tftypes.NewValue(tftypes.Number, oid),
 		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
@@ -562,20 +514,17 @@ func roleStateValueWithRoles(ctx context.Context, s rschema.Schema, name string,
 // ---------------------------------------------------------------------------
 
 func TestRoleResource_Create_beginTxError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectBegin().WillReturnError(fmt.Errorf("cannot begin"))
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot begin"))
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, false, -1)
+	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, -1)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -590,28 +539,23 @@ func TestRoleResource_Create_beginTxError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error starting transaction' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestRoleResource_Create_execError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	mock.ExpectBegin()
-	mock.ExpectExec("CREATE ROLE").WillReturnError(fmt.Errorf("role already exists"))
-	mock.ExpectRollback()
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role already exists"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, false, -1)
+	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, -1)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -626,29 +570,24 @@ func TestRoleResource_Create_execError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error creating role' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
-func TestRoleResource_Create_grantMembershipError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestRoleResource_Create_grantPrivilegeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	mock.ExpectBegin()
-	mock.ExpectExec("CREATE ROLE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("GRANT").WillReturnError(fmt.Errorf("role admin does not exist"))
-	mock.ExpectRollback()
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role admin does not exist"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValueWithRoles(ctx, s, "testrole", false, false, false, false, false, -1, []string{"admin"})
+	plan := rolePlanValueWithPrivilege(ctx, s, "testrole", false, false, false, false, -1, "table", "public", []string{"SELECT"})
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -656,35 +595,31 @@ func TestRoleResource_Create_grantMembershipError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error granting role membership" {
+		if d.Summary() == "Error granting privilege" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error granting role membership' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error granting privilege' diagnostic")
 	}
 }
 
 func TestRoleResource_Create_commitError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	mock.ExpectBegin()
-	mock.ExpectExec("CREATE ROLE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit().WillReturnError(fmt.Errorf("commit failed"))
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+	mockTx.EXPECT().Commit().Return(fmt.Errorf("commit failed"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, false, -1)
+	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, -1)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -699,28 +634,22 @@ func TestRoleResource_Create_commitError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error committing transaction' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestRoleResource_Read_notFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	// Return empty result set
-	rows := sqlmock.NewRows([]string{"oid", "rolcanlogin", "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolconnlimit", "rolvaliduntil"})
-	mock.ExpectQuery("SELECT oid").WillReturnRows(rows)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	state := roleStateValue(ctx, s, "testrole", false, false, false, false, false, -1, 16384)
+	state := roleStateValue(ctx, s, "testrole", false, false, false, false, -1, 16384)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -729,26 +658,22 @@ func TestRoleResource_Read_notFound(t *testing.T) {
 	if !resp.State.Raw.IsNull() {
 		t.Error("expected state to be removed (null) when role not found")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestRoleResource_Read_queryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectQuery("SELECT oid").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	state := roleStateValue(ctx, s, "testrole", false, false, false, false, false, -1, 16384)
+	state := roleStateValue(ctx, s, "testrole", false, false, false, false, -1, 16384)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -763,27 +688,21 @@ func TestRoleResource_Read_queryError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading role' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestRoleResource_Update_renameError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("ALTER ROLE.*RENAME TO").WillReturnError(fmt.Errorf("role exists"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role exists"))
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValue(ctx, s, "newname", false, false, false, false, false, -1)
-	state := roleStateValue(ctx, s, "oldname", false, false, false, false, false, -1, 16384)
+	plan := rolePlanValue(ctx, s, "newname", false, false, false, false, -1)
+	state := roleStateValue(ctx, s, "oldname", false, false, false, false, -1, 16384)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -798,28 +717,22 @@ func TestRoleResource_Update_renameError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error renaming role' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestRoleResource_Update_alterError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// Same name, so no rename. ALTER ROLE fails.
-	mock.ExpectExec("ALTER ROLE").WillReturnError(fmt.Errorf("insufficient privilege"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("insufficient privilege"))
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValue(ctx, s, "testrole", true, false, false, false, false, -1)
-	state := roleStateValue(ctx, s, "testrole", false, false, false, false, false, -1, 16384)
+	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, -1)
+	state := roleStateValue(ctx, s, "testrole", false, false, false, false, -1, 16384)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -834,29 +747,25 @@ func TestRoleResource_Update_alterError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error updating role' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
-func TestRoleResource_Update_grantError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestRoleResource_Update_grantPrivilegeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	// ALTER ROLE succeeds, then GRANT new membership fails
-	mock.ExpectExec("ALTER ROLE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("GRANT").WillReturnError(fmt.Errorf("role admin does not exist"))
+	// ALTER ROLE succeeds, then GRANT privilege fails
+	gomock.InOrder(
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil),
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("schema public does not exist")),
+	)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	plan := rolePlanValueWithRoles(ctx, s, "testrole", false, false, false, false, false, -1, []string{"admin"})
-	state := roleStateValue(ctx, s, "testrole", false, false, false, false, false, -1, 16384)
+	plan := rolePlanValueWithPrivilege(ctx, s, "testrole", false, false, false, false, -1, "table", "public", []string{"SELECT"})
+	state := roleStateValue(ctx, s, "testrole", false, false, false, false, -1, 16384)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -864,37 +773,33 @@ func TestRoleResource_Update_grantError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error granting role membership" {
+		if d.Summary() == "Error granting privilege" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error granting role membership' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error granting privilege' diagnostic")
 	}
 }
 
-func TestRoleResource_Update_revokeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestRoleResource_Update_revokePrivilegeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	// ALTER ROLE succeeds, then REVOKE membership fails
-	mock.ExpectExec("ALTER ROLE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("REVOKE").WillReturnError(fmt.Errorf("cannot revoke"))
+	// ALTER ROLE succeeds, then REVOKE old privilege fails
+	gomock.InOrder(
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil),
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot revoke")),
+	)
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	// Plan has no roles (removing "admin"), state has "admin"
-	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, false, -1)
-	state := roleStateValueWithRoles(ctx, s, "testrole", false, false, false, false, false, -1, 16384, []string{"admin"})
+	// Plan has no privileges, state has a privilege (revoking it)
+	plan := rolePlanValue(ctx, s, "testrole", false, false, false, false, -1)
+	state := roleStateValueWithPrivilege(ctx, s, "testrole", false, false, false, false, -1, 16384, "table", "public", []string{"SELECT"})
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -902,33 +807,27 @@ func TestRoleResource_Update_revokeError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error revoking role membership" {
+		if d.Summary() == "Error revoking privilege" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error revoking role membership' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error revoking privilege' diagnostic")
 	}
 }
 
 func TestRoleResource_Delete_dropError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("DROP ROLE").WillReturnError(fmt.Errorf("role has dependent objects"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role has dependent objects"))
 
 	ctx := context.Background()
 	s := roleResourceSchema()
-	state := roleStateValue(ctx, s, "testrole", false, false, false, false, false, -1, 16384)
+	state := roleStateValue(ctx, s, "testrole", false, false, false, false, -1, 16384)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &roleResource{db: db}
+	r := &resource.RoleResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -943,9 +842,6 @@ func TestRoleResource_Delete_dropError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error deleting role' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -953,9 +849,9 @@ func TestRoleResource_Delete_dropError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func schemaResourceSchema() rschema.Schema {
-	r := &schemaResource{}
-	sresp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, sresp)
+	r := &resource.SchemaResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
 	return sresp.Schema
 }
 
@@ -997,20 +893,17 @@ func schemaStateValue(ctx context.Context, s rschema.Schema, name, database, own
 // ---------------------------------------------------------------------------
 
 func TestSchemaResource_Create_execError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("CREATE SCHEMA").WillReturnError(fmt.Errorf("permission denied"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("permission denied"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	plan := schemaPlanValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1025,28 +918,24 @@ func TestSchemaResource_Create_execError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error creating schema' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Create_currentDBError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectExec("CREATE SCHEMA").WillReturnResult(sqlmock.NewResult(0, 0))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
 	// database is null, so it queries current_database()
-	mock.ExpectQuery("SELECT current_database").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	plan := schemaPlanValue(ctx, s, "myschema", nil, "postgres", false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1061,29 +950,25 @@ func TestSchemaResource_Create_currentDBError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading current database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Create_readOwnerError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectExec("CREATE SCHEMA").WillReturnResult(sqlmock.NewResult(0, 0))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
 	// database is set, so no current_database query
 	// Read owner query fails
-	mock.ExpectQuery("SELECT schema_owner").WillReturnError(fmt.Errorf("schema vanished"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("schema vanished"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	plan := schemaPlanValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1098,28 +983,22 @@ func TestSchemaResource_Create_readOwnerError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading schema after creation' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Read_notFound(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	// Empty result set triggers sql.ErrNoRows
-	rows := sqlmock.NewRows([]string{"schema_owner"})
-	mock.ExpectQuery("SELECT schema_owner").WillReturnRows(rows)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	state := schemaStateValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -1128,26 +1007,22 @@ func TestSchemaResource_Read_notFound(t *testing.T) {
 	if !resp.State.Raw.IsNull() {
 		t.Error("expected state to be removed (null) when schema not found")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Read_queryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectQuery("SELECT schema_owner").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	state := schemaStateValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1162,23 +1037,23 @@ func TestSchemaResource_Read_queryError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading schema' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Read_currentDBError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner1 := mocks.NewMockScanner(ctrl)
+	mockScanner2 := mocks.NewMockScanner(ctrl)
 
 	// Schema query succeeds
-	rows := sqlmock.NewRows([]string{"schema_owner"}).AddRow("postgres")
-	mock.ExpectQuery("SELECT schema_owner").WillReturnRows(rows)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner1)
+	mockScanner1.EXPECT().Scan(gomock.Any()).DoAndReturn(func(dest ...any) error {
+		*dest[0].(*string) = "postgres"
+		return nil
+	})
 	// current_database() query fails (database is null in state)
-	mock.ExpectQuery("SELECT current_database").WillReturnError(fmt.Errorf("broken pipe"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner2)
+	mockScanner2.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("broken pipe"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
@@ -1193,7 +1068,7 @@ func TestSchemaResource_Read_currentDBError(t *testing.T) {
 	})
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1208,19 +1083,13 @@ func TestSchemaResource_Read_currentDBError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading current database' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Update_renameError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("ALTER SCHEMA.*RENAME TO").WillReturnError(fmt.Errorf("schema exists"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("schema exists"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
@@ -1228,7 +1097,7 @@ func TestSchemaResource_Update_renameError(t *testing.T) {
 	state := schemaStateValue(ctx, s, "oldschema", "testdb", "postgres", false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1243,20 +1112,14 @@ func TestSchemaResource_Update_renameError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error renaming schema' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Update_ownerChangeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// Same name, owner changes
-	mock.ExpectExec("ALTER SCHEMA.*OWNER TO").WillReturnError(fmt.Errorf("role does not exist"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role does not exist"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
@@ -1264,7 +1127,7 @@ func TestSchemaResource_Update_ownerChangeError(t *testing.T) {
 	state := schemaStateValue(ctx, s, "myschema", "testdb", "oldowner", false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1279,20 +1142,16 @@ func TestSchemaResource_Update_ownerChangeError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error changing schema owner' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Update_readBackError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
 	// Same name, same owner => no ALTER needed, goes straight to read-back
-	mock.ExpectQuery("SELECT schema_owner").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
@@ -1300,7 +1159,7 @@ func TestSchemaResource_Update_readBackError(t *testing.T) {
 	state := schemaStateValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1315,26 +1174,20 @@ func TestSchemaResource_Update_readBackError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading schema after update' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_Delete_dropError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("DROP SCHEMA").WillReturnError(fmt.Errorf("schema has dependent objects"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("schema has dependent objects"))
 
 	ctx := context.Background()
 	s := schemaResourceSchema()
 	state := schemaStateValue(ctx, s, "myschema", "testdb", "postgres", false)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &schemaResource{db: db}
+	r := &resource.SchemaResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1349,9 +1202,6 @@ func TestSchemaResource_Delete_dropError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error deleting schema' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestSchemaResource_ImportState_withDatabase(t *testing.T) {
@@ -1359,14 +1209,14 @@ func TestSchemaResource_ImportState_withDatabase(t *testing.T) {
 	s := schemaResourceSchema()
 	req, resp := newImportReqResp(ctx, s, "mydb/myschema")
 
-	r := &schemaResource{}
+	r := &resource.SchemaResource{}
 	r.ImportState(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
 	}
 
-	var state schemaResourceModel
+	var state resource.SchemaResourceModel
 	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
@@ -1384,14 +1234,14 @@ func TestSchemaResource_ImportState_schemaOnly(t *testing.T) {
 	s := schemaResourceSchema()
 	req, resp := newImportReqResp(ctx, s, "myschema")
 
-	r := &schemaResource{}
+	r := &resource.SchemaResource{}
 	r.ImportState(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
 	}
 
-	var state schemaResourceModel
+	var state resource.SchemaResourceModel
 	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
@@ -1406,9 +1256,9 @@ func TestSchemaResource_ImportState_schemaOnly(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func grantResourceSchema() rschema.Schema {
-	r := &grantResource{}
-	sresp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, sresp)
+	r := &resource.GrantResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
 	return sresp.Schema
 }
 
@@ -1455,20 +1305,17 @@ func grantStateValue(ctx context.Context, s rschema.Schema, id, role, database, 
 // ---------------------------------------------------------------------------
 
 func TestGrantResource_Create_execError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("GRANT").WillReturnError(fmt.Errorf("permission denied"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("permission denied"))
 
 	ctx := context.Background()
 	s := grantResourceSchema()
 	plan := grantPlanValue(ctx, s, "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1483,26 +1330,20 @@ func TestGrantResource_Create_execError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error executing GRANT' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_Read_privError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("relation does not exist"))
+	mockDB.EXPECT().QueryContext(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("relation does not exist"))
 
 	ctx := context.Background()
 	s := grantResourceSchema()
 	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1517,28 +1358,24 @@ func TestGrantResource_Read_privError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error reading privileges' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_Read_empty(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockRows := mocks.NewMockRows(ctrl)
 
-	// Return empty result
-	rows := sqlmock.NewRows([]string{"privilege_type", "is_grantable"})
-	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	mockDB.EXPECT().QueryContext(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	mockRows.EXPECT().Next().Return(false)
+	mockRows.EXPECT().Err().Return(nil)
+	mockRows.EXPECT().Close().Return(nil)
 
 	ctx := context.Background()
 	s := grantResourceSchema()
 	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -1547,19 +1384,13 @@ func TestGrantResource_Read_empty(t *testing.T) {
 	if !resp.State.Raw.IsNull() {
 		t.Error("expected state to be removed (null) when no privileges found")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_Update_revokeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("REVOKE").WillReturnError(fmt.Errorf("cannot revoke"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot revoke"))
 
 	ctx := context.Background()
 	s := grantResourceSchema()
@@ -1567,7 +1398,7 @@ func TestGrantResource_Update_revokeError(t *testing.T) {
 	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1582,21 +1413,17 @@ func TestGrantResource_Update_revokeError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error executing REVOKE' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_Update_grantError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
 	// REVOKE succeeds, GRANT fails
-	mock.ExpectExec("REVOKE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("GRANT").WillReturnError(fmt.Errorf("cannot grant"))
+	gomock.InOrder(
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil),
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot grant")),
+	)
 
 	ctx := context.Background()
 	s := grantResourceSchema()
@@ -1604,7 +1431,7 @@ func TestGrantResource_Update_grantError(t *testing.T) {
 	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1619,26 +1446,20 @@ func TestGrantResource_Update_grantError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error executing GRANT' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_Delete_revokeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("REVOKE").WillReturnError(fmt.Errorf("cannot revoke"))
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot revoke"))
 
 	ctx := context.Background()
 	s := grantResourceSchema()
 	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &grantResource{db: db}
+	r := &resource.GrantResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1653,9 +1474,6 @@ func TestGrantResource_Delete_revokeError(t *testing.T) {
 	if !found {
 		t.Error("expected 'Error executing REVOKE' diagnostic")
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
 }
 
 func TestGrantResource_ImportState_invalidFormat(t *testing.T) {
@@ -1663,7 +1481,7 @@ func TestGrantResource_ImportState_invalidFormat(t *testing.T) {
 	s := grantResourceSchema()
 	req, resp := newImportReqResp(ctx, s, "invalid")
 
-	r := &grantResource{}
+	r := &resource.GrantResource{}
 	r.ImportState(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1685,14 +1503,14 @@ func TestGrantResource_ImportState_3parts(t *testing.T) {
 	s := grantResourceSchema()
 	req, resp := newImportReqResp(ctx, s, "testrole/database/testdb")
 
-	r := &grantResource{}
+	r := &resource.GrantResource{}
 	r.ImportState(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
 	}
 
-	var state grantResourceModel
+	var state resource.GrantResourceModel
 	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
@@ -1716,14 +1534,14 @@ func TestGrantResource_ImportState_4parts(t *testing.T) {
 	s := grantResourceSchema()
 	req, resp := newImportReqResp(ctx, s, "testrole/table/testdb/public")
 
-	r := &grantResource{}
+	r := &resource.GrantResource{}
 	r.ImportState(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
 	}
 
-	var state grantResourceModel
+	var state resource.GrantResourceModel
 	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
@@ -1745,84 +1563,159 @@ func TestGrantResource_ImportState_4parts(t *testing.T) {
 	}
 }
 
+func TestGrantResource_Read_successDatabase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockRows := mocks.NewMockRows(ctrl)
+
+	// database-level grant triggers drift detection via readPrivileges
+	mockDB.EXPECT().QueryContext(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	gomock.InOrder(
+		mockRows.EXPECT().Next().Return(true),
+		mockRows.EXPECT().Scan(gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
+			*dest[0].(*string) = "CONNECT"
+			*dest[1].(*bool) = false
+			return nil
+		}),
+		mockRows.EXPECT().Next().Return(false),
+		mockRows.EXPECT().Err().Return(nil),
+		mockRows.EXPECT().Close().Return(nil),
+	)
+
+	ctx := context.Background()
+	s := grantResourceSchema()
+	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
+	req, resp := newReadReqResp(ctx, s, state)
+
+	r := &resource.GrantResource{DB: mockDB}
+	r.Read(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+}
+
+func TestGrantResource_Read_noDriftTableAll(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	// table with no specific objects -> canDetectDrift=false, no queries
+	ctx := context.Background()
+	s := grantResourceSchema()
+	state := grantStateValue(ctx, s, "testrole_table_testdb_public", "testrole", "testdb", "public", "table", []string{"SELECT"}, false)
+	req, resp := newReadReqResp(ctx, s, state)
+
+	r := &resource.GrantResource{DB: mockDB}
+	r.Read(ctx, req, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+}
+
 // ---------------------------------------------------------------------------
-// defaultPrivilegesResource helpers
+// userResource helpers
 // ---------------------------------------------------------------------------
 
-func defaultPrivilegesResourceSchema() rschema.Schema {
-	r := &defaultPrivilegesResource{}
-	sresp := &resource.SchemaResponse{}
-	r.Schema(context.Background(), resource.SchemaRequest{}, sresp)
+func userResourceSchema() rschema.Schema {
+	r := &resource.UserResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
 	return sresp.Schema
 }
 
-func defaultPrivPlanValue(ctx context.Context, s rschema.Schema, owner, role, database string, schemaName interface{}, objectType string, privileges []string) tftypes.Value {
+func userPlanValue(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit int64) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
-	var privVals []tftypes.Value
-	for _, p := range privileges {
-		privVals = append(privVals, tftypes.NewValue(tftypes.String, p))
-	}
-	var schemaVal tftypes.Value
-	if schemaName == nil {
-		schemaVal = tftypes.NewValue(tftypes.String, nil)
-	} else {
-		schemaVal = tftypes.NewValue(tftypes.String, schemaName)
-	}
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, nil),
-		"owner":       tftypes.NewValue(tftypes.String, owner),
-		"role":        tftypes.NewValue(tftypes.String, role),
-		"database":    tftypes.NewValue(tftypes.String, database),
-		"schema":      schemaVal,
-		"object_type": tftypes.NewValue(tftypes.String, objectType),
-		"privileges":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, privVals),
-		"timeouts":    tftypes.NewValue(timeoutsObjectType, nil),
+		"name":             tftypes.NewValue(tftypes.String, name),
+		"password":         tftypes.NewValue(tftypes.String, nil),
+		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
+		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
+		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
+		"replication":      tftypes.NewValue(tftypes.Bool, replication),
+		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
+		"valid_until":      tftypes.NewValue(tftypes.String, nil),
+		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"oid":              tftypes.NewValue(tftypes.Number, nil),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
 }
 
-func defaultPrivStateValue(ctx context.Context, s rschema.Schema, id, owner, role, database string, schemaName interface{}, objectType string, privileges []string) tftypes.Value {
+func userPlanValueWithRoles(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit int64, roles []string) tftypes.Value {
 	tfType := s.Type().TerraformType(ctx)
-	var privVals []tftypes.Value
-	for _, p := range privileges {
-		privVals = append(privVals, tftypes.NewValue(tftypes.String, p))
-	}
-	var schemaVal tftypes.Value
-	if schemaName == nil {
-		schemaVal = tftypes.NewValue(tftypes.String, nil)
-	} else {
-		schemaVal = tftypes.NewValue(tftypes.String, schemaName)
+	var roleVals []tftypes.Value
+	for _, r := range roles {
+		roleVals = append(roleVals, tftypes.NewValue(tftypes.String, r))
 	}
 	return tftypes.NewValue(tfType, map[string]tftypes.Value{
-		"id":          tftypes.NewValue(tftypes.String, id),
-		"owner":       tftypes.NewValue(tftypes.String, owner),
-		"role":        tftypes.NewValue(tftypes.String, role),
-		"database":    tftypes.NewValue(tftypes.String, database),
-		"schema":      schemaVal,
-		"object_type": tftypes.NewValue(tftypes.String, objectType),
-		"privileges":  tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, privVals),
-		"timeouts":    tftypes.NewValue(timeoutsObjectType, nil),
+		"name":             tftypes.NewValue(tftypes.String, name),
+		"password":         tftypes.NewValue(tftypes.String, nil),
+		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
+		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
+		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
+		"replication":      tftypes.NewValue(tftypes.Bool, replication),
+		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
+		"valid_until":      tftypes.NewValue(tftypes.String, nil),
+		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, roleVals),
+		"oid":              tftypes.NewValue(tftypes.Number, nil),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
+	})
+}
+
+func userStateValue(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit, oid int64) tftypes.Value {
+	tfType := s.Type().TerraformType(ctx)
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"name":             tftypes.NewValue(tftypes.String, name),
+		"password":         tftypes.NewValue(tftypes.String, nil),
+		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
+		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
+		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
+		"replication":      tftypes.NewValue(tftypes.Bool, replication),
+		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
+		"valid_until":      tftypes.NewValue(tftypes.String, nil),
+		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
+		"oid":              tftypes.NewValue(tftypes.Number, oid),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
+	})
+}
+
+func userStateValueWithRoles(ctx context.Context, s rschema.Schema, name string, superuser, createDB, createRole, replication bool, connLimit, oid int64, roles []string) tftypes.Value {
+	tfType := s.Type().TerraformType(ctx)
+	var roleVals []tftypes.Value
+	for _, r := range roles {
+		roleVals = append(roleVals, tftypes.NewValue(tftypes.String, r))
+	}
+	return tftypes.NewValue(tfType, map[string]tftypes.Value{
+		"name":             tftypes.NewValue(tftypes.String, name),
+		"password":         tftypes.NewValue(tftypes.String, nil),
+		"superuser":        tftypes.NewValue(tftypes.Bool, superuser),
+		"create_database":  tftypes.NewValue(tftypes.Bool, createDB),
+		"create_role":      tftypes.NewValue(tftypes.Bool, createRole),
+		"replication":      tftypes.NewValue(tftypes.Bool, replication),
+		"connection_limit": tftypes.NewValue(tftypes.Number, connLimit),
+		"valid_until":      tftypes.NewValue(tftypes.String, nil),
+		"roles":            tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, roleVals),
+		"oid":              tftypes.NewValue(tftypes.Number, oid),
+		"timeouts":         tftypes.NewValue(timeoutsObjectType, nil),
 	})
 }
 
 // ---------------------------------------------------------------------------
-// defaultPrivilegesResource tests
+// userResource tests
 // ---------------------------------------------------------------------------
 
-func TestDefaultPrivilegesResource_Create_execError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Create_beginTxError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES").WillReturnError(fmt.Errorf("permission denied"))
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot begin"))
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	plan := defaultPrivPlanValue(ctx, s, "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
+	s := userResourceSchema()
+	plan := userPlanValue(ctx, s, "testuser", false, false, false, false, -1)
 	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &defaultPrivilegesResource{db: db}
+	r := &resource.UserResource{DB: mockDB}
 	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -1830,170 +1723,177 @@ func TestDefaultPrivilegesResource_Create_execError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error granting default privileges" {
+		if d.Summary() == "Error starting transaction" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error granting default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error starting transaction' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Read_queryError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Create_execError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("connection lost"))
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("user already exists"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
-	req, resp := newReadReqResp(ctx, s, state)
+	s := userResourceSchema()
+	plan := userPlanValue(ctx, s, "testuser", false, false, false, false, -1)
+	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &defaultPrivilegesResource{db: db}
-	r.Read(ctx, req, resp)
+	r := &resource.UserResource{DB: mockDB}
+	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diagnostic")
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error reading default privileges" {
+		if d.Summary() == "Error creating user" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error reading default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error creating user' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Read_scanError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Create_grantMembershipError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	// Return rows with wrong number of columns to trigger scan error
-	rows := sqlmock.NewRows([]string{"privilege_type"}).AddRow("SELECT")
-	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role admin does not exist"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
-	req, resp := newReadReqResp(ctx, s, state)
+	s := userResourceSchema()
+	plan := userPlanValueWithRoles(ctx, s, "testuser", false, false, false, false, -1, []string{"admin"})
+	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &defaultPrivilegesResource{db: db}
-	r.Read(ctx, req, resp)
+	r := &resource.UserResource{DB: mockDB}
+	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diagnostic")
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error scanning default privileges" {
+		if d.Summary() == "Error granting role membership" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error scanning default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error granting role membership' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Read_rowsError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Create_commitError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
 
-	rows := sqlmock.NewRows([]string{"privilege_type", "is_grantable"}).
-		AddRow("SELECT", false).
-		RowError(0, fmt.Errorf("row iteration error"))
-	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+	mockTx.EXPECT().Commit().Return(fmt.Errorf("commit failed"))
+	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
-	req, resp := newReadReqResp(ctx, s, state)
+	s := userResourceSchema()
+	plan := userPlanValue(ctx, s, "testuser", false, false, false, false, -1)
+	req, resp := newCreateReqResp(ctx, s, plan)
 
-	r := &defaultPrivilegesResource{db: db}
-	r.Read(ctx, req, resp)
+	r := &resource.UserResource{DB: mockDB}
+	r.Create(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected error diagnostic")
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error iterating default privileges" {
+		if d.Summary() == "Error committing transaction" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error iterating default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error committing transaction' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Read_noRows(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Read_notFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	rows := sqlmock.NewRows([]string{"privilege_type", "is_grantable"})
-	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
+	s := userResourceSchema()
+	state := userStateValue(ctx, s, "testuser", false, false, false, false, -1, 16384)
 	req, resp := newReadReqResp(ctx, s, state)
 
-	r := &defaultPrivilegesResource{db: db}
+	r := &resource.UserResource{DB: mockDB}
 	r.Read(ctx, req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
 	}
 	if !resp.State.Raw.IsNull() {
-		t.Error("expected state to be removed (null) when no default privileges found")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected state to be removed (null) when user not found")
 	}
 }
 
-func TestDefaultPrivilegesResource_Update_revokeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Read_queryError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES").WillReturnError(fmt.Errorf("cannot revoke"))
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	plan := defaultPrivPlanValue(ctx, s, "owner", "grantee", "testdb", "public", "table", []string{"INSERT"})
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
+	s := userResourceSchema()
+	state := userStateValue(ctx, s, "testuser", false, false, false, false, -1, 16384)
+	req, resp := newReadReqResp(ctx, s, state)
+
+	r := &resource.UserResource{DB: mockDB}
+	r.Read(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Error reading user" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'Error reading user' diagnostic")
+	}
+}
+
+func TestUserResource_Update_renameError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("user exists"))
+
+	ctx := context.Background()
+	s := userResourceSchema()
+	plan := userPlanValue(ctx, s, "newname", false, false, false, false, -1)
+	state := userStateValue(ctx, s, "oldname", false, false, false, false, -1, 16384)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &defaultPrivilegesResource{db: db}
+	r := &resource.UserResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -2001,36 +1901,29 @@ func TestDefaultPrivilegesResource_Update_revokeError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error revoking old default privileges" {
+		if d.Summary() == "Error renaming user" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error revoking old default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error renaming user' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Update_grantError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Update_alterError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	// First REVOKE succeeds, then GRANT fails
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES.*REVOKE").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES.*GRANT").WillReturnError(fmt.Errorf("cannot grant"))
+	// Same name, so no rename. ALTER USER fails.
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("insufficient privilege"))
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	plan := defaultPrivPlanValue(ctx, s, "owner", "grantee", "testdb", "public", "table", []string{"INSERT"})
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
+	s := userResourceSchema()
+	plan := userPlanValue(ctx, s, "testuser", false, false, false, false, -1)
+	state := userStateValue(ctx, s, "testuser", false, false, false, false, -1, 16384)
 	req, resp := newUpdateReqResp(ctx, s, plan, state)
 
-	r := &defaultPrivilegesResource{db: db}
+	r := &resource.UserResource{DB: mockDB}
 	r.Update(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -2038,33 +1931,94 @@ func TestDefaultPrivilegesResource_Update_grantError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error granting new default privileges" {
+		if d.Summary() == "Error updating user" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error granting new default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
+		t.Error("expected 'Error updating user' diagnostic")
 	}
 }
 
-func TestDefaultPrivilegesResource_Delete_revokeError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+func TestUserResource_Update_grantError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
 
-	mock.ExpectExec("ALTER DEFAULT PRIVILEGES").WillReturnError(fmt.Errorf("cannot revoke"))
+	// ALTER USER succeeds, then GRANT membership fails
+	gomock.InOrder(
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil),
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("role admin does not exist")),
+	)
 
 	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	state := defaultPrivStateValue(ctx, s, "owner_grantee_testdb_public_table", "owner", "grantee", "testdb", "public", "table", []string{"SELECT"})
+	s := userResourceSchema()
+	plan := userPlanValueWithRoles(ctx, s, "testuser", false, false, false, false, -1, []string{"admin"})
+	state := userStateValue(ctx, s, "testuser", false, false, false, false, -1, 16384)
+	req, resp := newUpdateReqResp(ctx, s, plan, state)
+
+	r := &resource.UserResource{DB: mockDB}
+	r.Update(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Error granting role membership" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'Error granting role membership' diagnostic")
+	}
+}
+
+func TestUserResource_Update_revokeError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	// ALTER USER succeeds, then REVOKE membership fails
+	gomock.InOrder(
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil),
+		mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("cannot revoke")),
+	)
+
+	ctx := context.Background()
+	s := userResourceSchema()
+	// Plan has no roles, state has a role (revoking it)
+	plan := userPlanValue(ctx, s, "testuser", false, false, false, false, -1)
+	state := userStateValueWithRoles(ctx, s, "testuser", false, false, false, false, -1, 16384, []string{"admin"})
+	req, resp := newUpdateReqResp(ctx, s, plan, state)
+
+	r := &resource.UserResource{DB: mockDB}
+	r.Update(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error diagnostic")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Error revoking role membership" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'Error revoking role membership' diagnostic")
+	}
+}
+
+func TestUserResource_Delete_dropError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("user has dependent objects"))
+
+	ctx := context.Background()
+	s := userResourceSchema()
+	state := userStateValue(ctx, s, "testuser", false, false, false, false, -1, 16384)
 	req, resp := newDeleteReqResp(ctx, s, state)
 
-	r := &defaultPrivilegesResource{db: db}
+	r := &resource.UserResource{DB: mockDB}
 	r.Delete(ctx, req, resp)
 
 	if !resp.Diagnostics.HasError() {
@@ -2072,102 +2026,11 @@ func TestDefaultPrivilegesResource_Delete_revokeError(t *testing.T) {
 	}
 	found := false
 	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Error revoking default privileges" {
+		if d.Summary() == "Error deleting user" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected 'Error revoking default privileges' diagnostic")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet expectations: %s", err)
-	}
-}
-
-func TestDefaultPrivilegesResource_ImportState_invalidFormat(t *testing.T) {
-	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	req, resp := newImportReqResp(ctx, s, "only/two/parts")
-
-	r := &defaultPrivilegesResource{}
-	r.ImportState(ctx, req, resp)
-
-	// 3 parts is too few (minimum is 4)
-	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected error diagnostic")
-	}
-	found := false
-	for _, d := range resp.Diagnostics.Errors() {
-		if d.Summary() == "Invalid Import ID" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected 'Invalid Import ID' diagnostic")
-	}
-}
-
-func TestDefaultPrivilegesResource_ImportState_4parts(t *testing.T) {
-	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	req, resp := newImportReqResp(ctx, s, "owner/grantee/testdb/table")
-
-	r := &defaultPrivilegesResource{}
-	r.ImportState(ctx, req, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-	}
-
-	var state defaultPrivilegesResourceModel
-	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
-	}
-	if state.Owner.ValueString() != "owner" {
-		t.Errorf("expected owner=owner, got %s", state.Owner.ValueString())
-	}
-	if state.Role.ValueString() != "grantee" {
-		t.Errorf("expected role=grantee, got %s", state.Role.ValueString())
-	}
-	if state.Database.ValueString() != "testdb" {
-		t.Errorf("expected database=testdb, got %s", state.Database.ValueString())
-	}
-	if state.ObjectType.ValueString() != "table" {
-		t.Errorf("expected object_type=table, got %s", state.ObjectType.ValueString())
-	}
-}
-
-func TestDefaultPrivilegesResource_ImportState_5parts(t *testing.T) {
-	ctx := context.Background()
-	s := defaultPrivilegesResourceSchema()
-	req, resp := newImportReqResp(ctx, s, "owner/grantee/testdb/public/table")
-
-	r := &defaultPrivilegesResource{}
-	r.ImportState(ctx, req, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-	}
-
-	var state defaultPrivilegesResourceModel
-	resp.Diagnostics.Append(resp.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("error reading state: %v", resp.Diagnostics.Errors())
-	}
-	if state.Owner.ValueString() != "owner" {
-		t.Errorf("expected owner=owner, got %s", state.Owner.ValueString())
-	}
-	if state.Role.ValueString() != "grantee" {
-		t.Errorf("expected role=grantee, got %s", state.Role.ValueString())
-	}
-	if state.Database.ValueString() != "testdb" {
-		t.Errorf("expected database=testdb, got %s", state.Database.ValueString())
-	}
-	if state.Schema.ValueString() != "public" {
-		t.Errorf("expected schema=public, got %s", state.Schema.ValueString())
-	}
-	if state.ObjectType.ValueString() != "table" {
-		t.Errorf("expected object_type=table, got %s", state.ObjectType.ValueString())
+		t.Error("expected 'Error deleting user' diagnostic")
 	}
 }

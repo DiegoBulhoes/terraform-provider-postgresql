@@ -6,7 +6,7 @@ package datasource_test
 import (
 	"testing"
 
-	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 

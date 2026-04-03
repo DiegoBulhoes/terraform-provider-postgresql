@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
@@ -20,8 +20,7 @@ func TestAccPostgresqlRoleDataSource_basic(t *testing.T) {
 			{
 				Config: fmt.Sprintf(`
 resource "postgresql_role" "test" {
-  name  = %q
-  login = true
+  name = %q
 }
 
 data "postgresql_role" "test" {
@@ -30,7 +29,7 @@ data "postgresql_role" "test" {
 `, rName),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "name", rName),
-					resource.TestCheckResourceAttr("data.postgresql_role.test", "login", "true"),
+					resource.TestCheckResourceAttr("data.postgresql_role.test", "login", "false"),
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "superuser", "false"),
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "create_database", "false"),
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "create_role", "false"),
@@ -56,14 +55,14 @@ resource "postgresql_role" "parent" {
   name = %q
 }
 
-resource "postgresql_role" "test" {
-  name  = %q
-  login = true
-  roles = [postgresql_role.parent.name]
+resource "postgresql_user" "test" {
+  name     = %q
+  password = "testpass"
+  roles    = [postgresql_role.parent.name]
 }
 
 data "postgresql_role" "test" {
-  name = postgresql_role.test.name
+  name = postgresql_user.test.name
 }
 `, parentRole, rName),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -85,9 +84,9 @@ func TestAccPostgresqlRoleDataSource_fullAttributes(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
-resource "postgresql_role" "test" {
+resource "postgresql_user" "test" {
   name             = %q
-  login            = true
+  password         = "testpass"
   create_database  = true
   create_role      = true
   connection_limit = 5
@@ -95,7 +94,7 @@ resource "postgresql_role" "test" {
 }
 
 data "postgresql_role" "test" {
-  name = postgresql_role.test.name
+  name = postgresql_user.test.name
 }
 `, rName),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -157,8 +156,6 @@ func TestAccPostgresqlRoleDataSource_nonExistent(t *testing.T) {
 		},
 	})
 }
-
-// Example-based test: validate documentation example from examples/data-sources/postgresql_role/data-source.tf
 
 func TestAccPostgresqlRoleDataSource_exampleAdmin(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{

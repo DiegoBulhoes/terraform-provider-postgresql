@@ -1,13 +1,13 @@
 //go:build integration
 
-package resource_test
+package datasource_test
 
 import (
 	"os"
 	"testing"
 
-	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/provider"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )

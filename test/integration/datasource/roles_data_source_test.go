@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
@@ -19,7 +19,6 @@ func TestAccPostgresqlRolesDataSource_basic(t *testing.T) {
 			{
 				Config: `data "postgresql_roles" "test" {}`,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// At least postgres role exists
 					resource.TestCheckResourceAttrSet("data.postgresql_roles.test", "roles.#"),
 				),
 			},
@@ -56,18 +55,17 @@ func TestAccPostgresqlRolesDataSource_loginOnly(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: `
-				resource "postgresql_role" "login_role" {
-					name  = "acctest_roles_ds_login"
-					login = true
+				resource "postgresql_user" "login_user" {
+					name     = "acctest_roles_ds_login"
+					password = "testpass"
 				}
 				resource "postgresql_role" "nologin_role" {
-					name  = "acctest_roles_ds_nologin"
-					login = false
+					name = "acctest_roles_ds_nologin"
 				}
 				data "postgresql_roles" "test" {
 					like_pattern = "acctest_roles_ds_%"
 					login_only   = true
-					depends_on   = [postgresql_role.login_role, postgresql_role.nologin_role]
+					depends_on   = [postgresql_user.login_user, postgresql_role.nologin_role]
 				}`,
 				Check: resource.TestCheckResourceAttrSet("data.postgresql_roles.test", "roles.#"),
 			},
@@ -91,8 +89,6 @@ func TestAccPostgresqlRolesDataSource_notLikePattern(t *testing.T) {
 	})
 }
 
-// Example-based tests: validate documentation examples from examples/data-sources/postgresql_roles/data-source.tf
-
 func TestAccPostgresqlRolesDataSource_exampleLoginOnly(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },
@@ -105,7 +101,6 @@ data "postgresql_roles" "login_roles" {
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// At least the postgres superuser has login
 					resource.TestCheckResourceAttrSet("data.postgresql_roles.login_roles", "roles.#"),
 				),
 			},
@@ -125,7 +120,6 @@ data "postgresql_roles" "custom_roles" {
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// At least postgres role exists and doesn't start with pg_
 					resource.TestCheckResourceAttrSet("data.postgresql_roles.custom_roles", "roles.#"),
 				),
 			},
