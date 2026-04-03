@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs changelog tidy
+.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs tidy
 
 BINARY_NAME=terraform-provider-postgresql
 GO=go
@@ -49,6 +49,3 @@ tidy:
 docs:
 	$(GO) tool tfplugindocs validate
 	$(GO) tool tfplugindocs generate
-
-changelog:
-	git-cliff -o CHANGELOG.md
