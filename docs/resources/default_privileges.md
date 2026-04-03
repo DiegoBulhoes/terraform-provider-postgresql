@@ -1,6 +1,6 @@
 ---
 page_title: "Resource postgresql_default_privileges - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages PostgreSQL default privileges using ALTER DEFAULT PRIVILEGES.
 ---
@@ -8,6 +8,8 @@ description: |-
 # Resource (postgresql_default_privileges)
 
 Manages PostgreSQL default privileges using `ALTER DEFAULT PRIVILEGES`. Default privileges define the privileges that will be applied to objects created in the future by a specific role.
+
+~> **Note:** The import ID format uses `/` as a separator: `role/database/schema/object_type/grantee`. For example: `terraform import postgresql_default_privileges.tables owner_role/my_database/public/table/app_role`.
 
 ## Example Usage
 
@@ -115,7 +117,17 @@ resource "postgresql_default_privileges" "api_functions" {
 ### Optional
 
 - `schema` (String) Target schema where default privileges are applied. If omitted, defaults apply database-wide.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `id` (String) Composite identifier: {owner}_{role}_{database}_{schema}_{object_type}.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

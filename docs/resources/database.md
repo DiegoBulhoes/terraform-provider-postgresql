@@ -1,6 +1,6 @@
 ---
 page_title: "Resource postgresql_database - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Manages a PostgreSQL database.
 ---
@@ -8,6 +8,10 @@ description: |-
 # Resource (postgresql_database)
 
 Manages a PostgreSQL database.
+
+!> **Warning:** Destroying this resource will execute `DROP DATABASE`, which requires that no active connections exist to the target database. Ensure all connections are closed before destroying.
+
+~> **Note:** Changing the `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` attributes forces the resource to be destroyed and recreated.
 
 ## Example Usage
 
@@ -78,10 +82,20 @@ resource "postgresql_database" "analytics" {
 - `owner` (String) The role name of the owner of the database.
 - `tablespace_name` (String) The name of the tablespace that will be associated with the new database.
 - `template` (String) The name of the template database from which to create the new database.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
 
 - `oid` (Number) The OID of the database.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

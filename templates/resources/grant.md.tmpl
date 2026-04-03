@@ -1,6 +1,6 @@
 ---
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages PostgreSQL GRANT privileges on database objects.
 ---
@@ -8,6 +8,8 @@ description: |-
 # {{.Type}} ({{.Name}})
 
 Manages PostgreSQL GRANT privileges on database objects such as databases, schemas, tables, sequences, and functions.
+
+~> **Note:** Grants on ALL TABLES, ALL SEQUENCES, or ALL FUNCTIONS do not track individual objects for drift detection. If new objects are created outside of Terraform, they will not be detected as missing grants.
 
 ## Example Usage
 

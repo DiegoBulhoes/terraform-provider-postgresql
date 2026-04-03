@@ -1,6 +1,6 @@
 ---
 page_title: "Resource postgresql_grant - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages PostgreSQL GRANT privileges on database objects.
 ---
@@ -8,6 +8,8 @@ description: |-
 # Resource (postgresql_grant)
 
 Manages PostgreSQL GRANT privileges on database objects such as databases, schemas, tables, sequences, and functions.
+
+~> **Note:** Grants on ALL TABLES, ALL SEQUENCES, or ALL FUNCTIONS do not track individual objects for drift detection. If new objects are created outside of Terraform, they will not be detected as missing grants.
 
 ## Example Usage
 
@@ -120,10 +122,22 @@ resource "postgresql_grant" "full_sequences" {
 ### Optional
 
 - `database` (String) The database on which to grant privileges.
+
+~> **Note:** For database-level grants, the provider uses its configured connection. Ensure the provider is configured to connect to the correct database.
 - `objects` (List of String) Specific object names to grant on. If empty, grants on all objects of the given type in the schema.
 - `schema` (String) The schema on which to grant privileges.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `with_grant_option` (Boolean) Whether the grantee can grant the same privileges to others.
 
 ### Read-Only
 
 - `id` (String) Composite identifier: {role}_{object_type}_{database}_{schema}.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).

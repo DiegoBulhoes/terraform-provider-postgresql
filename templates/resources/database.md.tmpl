@@ -1,6 +1,6 @@
 ---
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Manages a PostgreSQL database.
 ---
@@ -8,6 +8,10 @@ description: |-
 # {{.Type}} ({{.Name}})
 
 Manages a PostgreSQL database.
+
+!> **Warning:** Destroying this resource will execute `DROP DATABASE`, which requires that no active connections exist to the target database. Ensure all connections are closed before destroying.
+
+~> **Note:** Changing the `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` attributes forces the resource to be destroyed and recreated.
 
 ## Example Usage
 

@@ -1,6 +1,6 @@
 ---
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Manages a PostgreSQL schema.
 ---
@@ -8,6 +8,8 @@ description: |-
 # {{.Type}} ({{.Name}})
 
 Manages a PostgreSQL schema.
+
+~> **Note:** The `database` attribute does not open a separate connection to the specified database. The provider always operates on the database configured at the provider level. To manage schemas in a different database, configure a separate provider instance.
 
 ## Example Usage
 

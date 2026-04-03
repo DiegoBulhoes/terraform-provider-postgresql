@@ -28,4 +28,20 @@ The provider supports configuration via attributes or environment variables:
 
 Environment variables are used as fallback when the corresponding attribute is not set.
 
+## Known Limitations
+
+- The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a separate connection. The provider operates on the database configured at the provider level.
+- `postgresql_role` password cannot be read back from PostgreSQL. After import, the password will not be in state.
+- `postgresql_grant` on ALL TABLES/SEQUENCES/FUNCTIONS does not track individual objects for drift detection.
+
+## Compatibility
+
+| PostgreSQL Version | Status          |
+|--------------------|-----------------|
+| 17                 | Fully supported |
+| 16                 | Fully supported |
+| 15                 | Fully supported |
+| 14                 | Fully supported |
+| 13                 | Best effort     |
+
 {{ .SchemaMarkdown | trimspace }}

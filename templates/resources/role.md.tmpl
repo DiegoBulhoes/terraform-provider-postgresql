@@ -1,6 +1,6 @@
 ---
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages a PostgreSQL role.
 ---
@@ -8,6 +8,8 @@ description: |-
 # {{.Type}} ({{.Name}})
 
 Manages a PostgreSQL role. Roles can be used to represent users or groups and control access to database objects.
+
+~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a role, the password will not be present in state and will show as changed on the next plan.
 
 ## Example Usage
 

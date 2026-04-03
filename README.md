@@ -125,6 +125,16 @@ Full documentation for each resource and data source is available in the [`docs/
 
 ## Development
 
+### Setup
+
+```bash
+git clone https://github.com/DiegoBulhoes/terraform-provider-postgresql.git
+cd terraform-provider-postgresql
+make build
+```
+
+That's it. All Go tools (`golangci-lint`, `goimports`, `tfplugindocs`) are declared in `go.mod` and resolved automatically via `go tool` — no manual installation needed.
+
 ### Build
 
 ```bash
@@ -133,28 +143,26 @@ make build
 
 ### Tests
 
-Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker.
+Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker. Requires Docker running.
 
 ```bash
-# Run all acceptance tests
-make testacc
-
-# With coverage
-make testacc-cover
-
-# Generate coverage HTML report
-make cover-html
+make testacc          # Run all tests (unit + acceptance)
+make testacc-cover    # With coverage
+make cover-html       # Generate HTML coverage report
 ```
 
 See [TESTING.md](TESTING.md) for more details.
 
+### Lint & Format
+
+```bash
+make lint   # golangci-lint (via go tool)
+make fmt    # gofmt + goimports (via go tool)
+```
+
 ### Generate documentation
 
 ```bash
-# Install tfplugindocs
-go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
-
-# Generate docs from templates and schema
 make docs
 ```
 

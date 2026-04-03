@@ -1,147 +1,69 @@
-# Testes e Coverage
+# Testing
 
-## Pré-requisitos
+## Prerequisites
 
 - Go 1.25+
-- Docker (para testcontainers)
+- Docker (for testcontainers)
 
-## Como funciona
+## How it works
 
-Os testes de aceitação usam [testcontainers-go](https://github.com/testcontainers/testcontainers-go) para subir um container PostgreSQL 16 automaticamente. Nenhuma configuração manual de banco é necessária.
+Acceptance tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to spin up a PostgreSQL 16 container automatically. No manual database setup is needed.
 
-O `TestMain` em `internal/provider/provider_test.go`:
+If `PGHOST` is already set, the container is skipped and tests use the external database.
 
-1. Sobe um container `postgres:16-alpine` com `max_connections=500`
-2. Aguarda o banco ficar pronto (log `"database system is ready to accept connections"`)
-3. Descobre host e porta mapeados pelo Docker
-4. Seta as variáveis de ambiente `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`
-5. Executa todos os testes
-6. Destrói o container ao finalizar
-
-Se `PGHOST` já estiver definido no ambiente, o container **não** é criado e os testes usam o banco externo apontado pelas variáveis PG*.
-
-## Executando os testes
-
-### Todos os testes (com testcontainer)
+## Running tests
 
 ```bash
-TF_ACC=1 go test ./internal/provider/ -v -parallel 1 -timeout 600s
-```
+# All tests (unit + acceptance)
+TF_ACC=1 go test ./... -timeout 600s
 
-> **`-parallel 1`** é recomendado para evitar exaustão de conexões. Cada test step do Terraform cria um processo separado com sua própria pool de conexões.
+# Unit tests only (no Docker needed)
+go test ./...
 
-### Usando o Makefile
+# Specific test
+TF_ACC=1 go test ./internal/resource/ -run "TestAccPostgresqlRole_basic"
 
-```bash
+# Using Makefile
 make testacc
-```
-
-### Teste específico
-
-```bash
-TF_ACC=1 go test ./internal/provider/ -v -parallel 1 -run "TestAccPostgresqlRole_basic"
-```
-
-### Com banco externo (sem Docker)
-
-```bash
-export PGHOST=localhost
-export PGPORT=5432
-export PGUSER=postgres
-export PGPASSWORD=minha_senha
-export PGDATABASE=postgres
-export PGSSLMODE=disable
-
-TF_ACC=1 go test ./internal/provider/ -v -parallel 1 -timeout 600s
 ```
 
 ## Coverage
 
-### Gerar relatório de coverage
-
 ```bash
-TF_ACC=1 go test ./internal/provider/ -parallel 1 -timeout 600s -coverprofile=coverage.out
-```
-
-### Visualizar coverage por função
-
-```bash
+TF_ACC=1 go test ./... -timeout 600s -coverprofile=coverage.out
 go tool cover -func=coverage.out
-```
-
-Saída exemplo:
-
-```
-github.com/.../provider.go:85:     Configure    80.0%
-github.com/.../role_resource.go:137:   Create       74.1%
-...
-total:                             (statements) 80.8%
-```
-
-### Gerar relatório HTML
-
-```bash
 go tool cover -html=coverage.out -o coverage.html
 ```
 
-Abra o arquivo `coverage.html` no navegador para ver linhas cobertas (verde) e não cobertas (vermelho).
+## Test structure
 
-### Funções com menor coverage e por quê
+Tests are co-located with source files. Each package has:
 
-| Função | Coverage | Motivo |
-|---|---|---|
-| `Configure` (todos) | 71.4% | Branch de erro quando `ProviderData` tem tipo errado - não testável em acceptance tests |
-| `database_resource.Read` | 46.2% | Path de "database not found" requer deletar o banco fora do Terraform durante o teste |
-| `envOrDefault` | 66.7% | Branch de variável de ambiente definida - coberto implicitamente pelo testcontainer |
-
-## Estrutura dos testes
+- **Unit tests** (`go-sqlmock`) — error paths, no DB needed
+- **Acceptance tests** (`TF_ACC=1`) — full flow with real PostgreSQL
 
 ```
-internal/provider/
-├── provider_test.go                    # TestMain (testcontainer) + helpers
-├── role_resource_test.go               # 8 testes
-├── role_data_source_test.go            # 4 testes
-├── database_resource_test.go           # 6 testes
-├── database_data_source_test.go        # 3 testes
-├── schema_resource_test.go             # 5 testes
-├── schemas_data_source_test.go         # 6 testes
-├── grant_resource_test.go              # 13 testes
-├── default_privileges_resource_test.go # 7 testes
-└── query_data_source_test.go           # 6 testes
+internal/
+├── common/          helpers_test.go
+├── datasource/      *_data_source_test.go, mock_test.go
+├── resource/        *_resource_test.go, mock_test.go, crud_mock_test.go
+└── provider/        provider_test.go, provider_validation_test.go
 ```
 
-**Total: 58 testes de aceitação**
+## Environment variables
 
-## Variáveis de ambiente
-
-| Variável | Default (testcontainer) | Descrição |
-|---|---|---|
-| `TF_ACC` | - | Obrigatório para rodar testes de aceitação |
-| `PGHOST` | (auto) | Host do PostgreSQL. Se definido, pula o testcontainer |
-| `PGPORT` | (auto) | Porta do PostgreSQL |
-| `PGUSER` | `postgres` | Usuário |
-| `PGPASSWORD` | `postgres` | Senha |
-| `PGDATABASE` | `postgres` | Banco padrão |
-| `PGSSLMODE` | `disable` | Modo SSL |
+| Variable       | Default        | Description                                     |
+| -------------- | -------------- | ----------------------------------------------- |
+| `TF_ACC`       | —              | Required for acceptance tests                   |
+| `PGHOST`       | (auto)         | PostgreSQL host. If set, skips testcontainer     |
+| `PGPORT`       | (auto)         | PostgreSQL port                                 |
+| `PGUSER`       | `postgres`     | Username                                        |
+| `PGPASSWORD`   | `postgres`     | Password                                        |
+| `PGDATABASE`   | `postgres`     | Default database                                |
+| `PGSSLMODE`    | `disable`      | SSL mode                                        |
 
 ## Troubleshooting
 
-### `pq: sorry, too many clients already`
+**`pq: sorry, too many clients already`** — Use `-parallel 1`. The container starts with `max_connections=500` but each test step creates its own connections.
 
-O PostgreSQL atingiu o limite de conexões. Soluções:
-
-- Use `-parallel 1` ao rodar os testes
-- O container já sobe com `max_connections=500`, mas cada test step cria conexões que demoram para fechar
-- O provider configura `MaxOpenConns(5)` por instância
-
-### Container não inicia
-
-Verifique se o Docker está rodando:
-
-```bash
-docker info
-```
-
-### Testes lentos
-
-Todos os 58 testes levam ~30 segundos com `-parallel 1`. O overhead é do startup do container (~2s) e do binário do Terraform em cada test step.
+**Container won't start** — Check Docker is running: `docker info`

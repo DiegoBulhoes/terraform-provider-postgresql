@@ -1,6 +1,6 @@
 ---
 page_title: "Resource postgresql_role - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages a PostgreSQL role.
 ---
@@ -8,6 +8,8 @@ description: |-
 # Resource (postgresql_role)
 
 Manages a PostgreSQL role. Roles can be used to represent users or groups and control access to database objects.
+
+~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a role, the password will not be present in state and will show as changed on the next plan.
 
 ## Example Usage
 
@@ -99,11 +101,21 @@ resource "postgresql_role" "full_access" {
 - `replication` (Boolean) Whether the role can initiate streaming replication. Default: false.
 - `roles` (List of String) List of roles that this role is a member of.
 - `superuser` (Boolean) Whether the role is a superuser. Default: false.
-- `valid_until` (String) Timestamp until which the role's password is valid. If omitted, the password never expires.
+- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
+- `valid_until` (String) Timestamp until which the role's password is valid. If omitted, the password never expires. Format: RFC 3339 (e.g. 2025-12-31T23:59:59Z).
 
 ### Read-Only
 
 - `oid` (Number) The OID of the role.
+
+<a id="nestedblock--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+- `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 

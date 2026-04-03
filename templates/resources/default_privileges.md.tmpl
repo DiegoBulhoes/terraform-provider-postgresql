@@ -1,6 +1,6 @@
 ---
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
-subcategory: ""
+subcategory: "Roles & Permissions"
 description: |-
   Manages PostgreSQL default privileges using ALTER DEFAULT PRIVILEGES.
 ---
@@ -8,6 +8,8 @@ description: |-
 # {{.Type}} ({{.Name}})
 
 Manages PostgreSQL default privileges using `ALTER DEFAULT PRIVILEGES`. Default privileges define the privileges that will be applied to objects created in the future by a specific role.
+
+~> **Note:** The import ID format uses `/` as a separator: `role/database/schema/object_type/grantee`. For example: `terraform import postgresql_default_privileges.tables owner_role/my_database/public/table/app_role`.
 
 ## Example Usage
 
