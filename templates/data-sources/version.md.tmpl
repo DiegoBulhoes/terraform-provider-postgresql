@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Exposes the PostgreSQL server version information.
+---
+
+# {{.Type}} ({{.Name}})
+
+Exposes the PostgreSQL server version information including major/minor version and numeric server version.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_version/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

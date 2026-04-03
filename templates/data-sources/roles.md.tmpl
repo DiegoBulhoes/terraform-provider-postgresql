@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Lists PostgreSQL roles with optional filtering.
+---
+
+# {{.Type}} ({{.Name}})
+
+Lists PostgreSQL roles with optional filtering by name pattern and login privilege.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_roles/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

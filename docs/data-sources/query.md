@@ -13,8 +13,6 @@ Executes a read-only SQL query and returns the results. This data source is usef
 
 ## Example Usage
 
-### Read-only query (default)
-
 ```terraform
 # Query the PostgreSQL version
 data "postgresql_query" "version" {
@@ -53,20 +51,18 @@ data "postgresql_query" "table_sizes" {
 output "largest_tables" {
   value = data.postgresql_query.table_sizes.rows
 }
-```
 
-### Destructive query (opt-in)
-
-```terraform
-# Clean up expired sessions — requires allow_destructive
-data "postgresql_query" "cleanup" {
-  database          = "my_application"
-  query             = "DELETE FROM sessions WHERE expired_at < now() RETURNING id"
-  allow_destructive = true
+# List installed extensions
+data "postgresql_query" "extensions" {
+  database = "my_application"
+  query    = "SELECT extname, extversion FROM pg_extension ORDER BY extname"
 }
 
-output "deleted_session_ids" {
-  value = data.postgresql_query.cleanup.rows
+output "installed_extensions" {
+  value = {
+    for row in data.postgresql_query.extensions.rows :
+    row["extname"] => row["extversion"]
+  }
 }
 ```
 

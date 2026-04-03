@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Lists PostgreSQL tables with optional filtering.
+---
+
+# {{.Type}} ({{.Name}})
+
+Lists PostgreSQL tables with optional filtering by schema, name pattern, and table type.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_tables/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

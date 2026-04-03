@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Lists installed PostgreSQL extensions.
+---
+
+# {{.Type}} ({{.Name}})
+
+Lists installed PostgreSQL extensions with their version, schema, and description.
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_extensions/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
