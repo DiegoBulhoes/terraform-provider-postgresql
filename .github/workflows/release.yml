@@ -57,7 +57,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run unit tests
-        run: go test -race ./...
+        run: go test -race -coverpkg=./internal/... ./test/unit/...
 
   acceptance:
     name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
@@ -82,7 +82,7 @@ jobs:
         env:
           TF_ACC: "1"
           POSTGRES_IMAGE: "postgres:${{ matrix.postgres_version }}-alpine"
-        run: go test -tags integration -timeout 600s ./...
+        run: go test -tags integration -timeout 600s -coverpkg=./internal/... ./...
 
   goreleaser:
     name: GoReleaser

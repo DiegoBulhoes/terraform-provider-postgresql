@@ -1,51 +1,62 @@
-.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs tidy
+.DEFAULT_GOAL := all
 
-BINARY_NAME=terraform-provider-postgresql
-GO=go
-GOFLAGS=-v
+BINARY_NAME = terraform-provider-postgresql
+GO          = go
+PG_VERSIONS ?= 14 15 16 17
 
+## ── All (CI pipeline) ───────────────────────────────────────────
+.PHONY: all
+all: tidy lint security test build docs
+
+## ── Build & Install ─────────────────────────────────────────────
+.PHONY: build
 build:
-	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) .
+	$(GO) build -v -o $(BINARY_NAME) .
 
+.PHONY: install
 install:
 	$(GO) install .
 
-test:
-	$(GO) test -v -race ./...
-
-PG_VERSIONS ?= 14 15 16 17
-
-testacc:
-	@for v in $(PG_VERSIONS); do \
-		echo "=== PostgreSQL $$v ==="; \
-		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 TF_ACC_TERRAFORM_PATH=$$(which terraform) $(GO) test -tags integration -v -timeout 600s -count=1 ./... || exit 1; \
-		echo ""; \
-	done
-
-testacc-cover:
-	TF_ACC=1 $(GO) test -tags integration -timeout 600s -coverprofile=coverage.out ./...
-	$(GO) tool cover -func=coverage.out | tail -1
-
-cover-html: coverage.out
-	$(GO) tool cover -html=coverage.out -o coverage.html
-	@echo "Open coverage.html in your browser"
-
+## ── Quality ─────────────────────────────────────────────────────
+.PHONY: fmt
 fmt:
 	$(GO) fmt ./...
 	$(GO) tool goimports -w .
 
-vet:
+.PHONY: lint
+lint: fmt
 	$(GO) vet ./...
-
-lint: vet
 	$(GO) tool golangci-lint run ./...
 
-clean:
-	rm -f $(BINARY_NAME) coverage.out coverage.html
+.PHONY: security
+security:
+	govulncheck ./...
 
+## ── Tests ───────────────────────────────────────────────────────
+.PHONY: test
+test:
+	$(GO) test -race -count=1 -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/... ./test/unit/...
+	$(GO) tool cover -func=coverage.out | tail -1
+	@for v in $(PG_VERSIONS); do \
+		echo "=== PostgreSQL $$v ==="; \
+		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 \
+		TF_ACC_TERRAFORM_PATH=$$(which terraform) \
+		$(GO) test -tags integration -timeout 600s -count=1 ./test/integration/... || exit 1; \
+		echo ""; \
+	done
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
+## ── Docs ────────────────────────────────────────────────────────
+.PHONY: docs
+docs:
+	$(GO) tool tfplugindocs generate
+	$(GO) tool tfplugindocs validate
+
+## ── Housekeeping ────────────────────────────────────────────────
+.PHONY: tidy
 tidy:
 	$(GO) mod tidy
 
-docs:
-	$(GO) tool tfplugindocs validate
-	$(GO) tool tfplugindocs generate
+.PHONY: clean
+clean:
+	rm -f $(BINARY_NAME) coverage.out coverage.html

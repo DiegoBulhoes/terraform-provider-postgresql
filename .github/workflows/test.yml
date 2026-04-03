@@ -51,7 +51,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run unit tests
-        run: go test -race ./...
+        run: go test -race -coverpkg=./internal/... -coverprofile=coverage-unit.out ./test/unit/...
 
   acceptance:
     name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
@@ -76,7 +76,7 @@ jobs:
         env:
           TF_ACC: "1"
           POSTGRES_IMAGE: "postgres:${{ matrix.postgres_version }}-alpine"
-        run: go test -tags integration -timeout 600s -coverprofile=coverage.out ./...
+        run: go test -tags integration -timeout 600s -coverprofile=coverage.out -coverpkg=./internal/... ./...
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out | tail -1
