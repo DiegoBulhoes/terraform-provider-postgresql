@@ -4,9 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -16,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/lib/pq"
 )
@@ -26,21 +32,22 @@ var (
 )
 
 type roleResource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type roleResourceModel struct {
-	Name            types.String `tfsdk:"name"`
-	Password        types.String `tfsdk:"password"`
-	Login           types.Bool   `tfsdk:"login"`
-	Superuser       types.Bool   `tfsdk:"superuser"`
-	CreateDatabase  types.Bool   `tfsdk:"create_database"`
-	CreateRole      types.Bool   `tfsdk:"create_role"`
-	Replication     types.Bool   `tfsdk:"replication"`
-	ConnectionLimit types.Int64  `tfsdk:"connection_limit"`
-	ValidUntil      types.String `tfsdk:"valid_until"`
-	Roles           types.List   `tfsdk:"roles"`
-	OID             types.Int64  `tfsdk:"oid"`
+	Name            types.String   `tfsdk:"name"`
+	Password        types.String   `tfsdk:"password"`
+	Login           types.Bool     `tfsdk:"login"`
+	Superuser       types.Bool     `tfsdk:"superuser"`
+	CreateDatabase  types.Bool     `tfsdk:"create_database"`
+	CreateRole      types.Bool     `tfsdk:"create_role"`
+	Replication     types.Bool     `tfsdk:"replication"`
+	ConnectionLimit types.Int64    `tfsdk:"connection_limit"`
+	ValidUntil      types.String   `tfsdk:"valid_until"`
+	Roles           types.List     `tfsdk:"roles"`
+	OID             types.Int64    `tfsdk:"oid"`
+	Timeouts        timeouts.Value `tfsdk:"timeouts"`
 }
 
 func NewRoleResource() resource.Resource {
@@ -51,13 +58,17 @@ func (r *roleResource) Metadata(_ context.Context, req resource.MetadataRequest,
 	resp.TypeName = req.ProviderTypeName + "_role"
 }
 
-func (r *roleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *roleResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     0,
 		Description: "Manages a PostgreSQL role.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Description: "The name of the role.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 63),
+				},
 			},
 			"password": schema.StringAttribute{
 				Description: "The password for the role.",
@@ -102,10 +113,19 @@ func (r *roleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Optional:    true,
 				Computed:    true,
 				Default:     int64default.StaticInt64(-1),
+				Validators: []validator.Int64{
+					int64validator.AtLeast(-1),
+				},
 			},
 			"valid_until": schema.StringAttribute{
-				Description: "Timestamp until which the role's password is valid. If omitted, the password never expires.",
+				Description: "Timestamp until which the role's password is valid. If omitted, the password never expires. Format: RFC 3339 (e.g. 2025-12-31T23:59:59Z).",
 				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}`),
+						"must be a valid timestamp (e.g. 2025-12-31T23:59:59Z)",
+					),
+				},
 			},
 			"roles": schema.ListAttribute{
 				Description: "List of roles that this role is a member of.",
@@ -116,6 +136,13 @@ func (r *roleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Description: "The OID of the role.",
 				Computed:    true,
 			},
+		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -139,11 +166,27 @@ func (r *roleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	roleName := plan.Name.ValueString()
 	sqlStr := fmt.Sprintf("CREATE ROLE %s", pq.QuoteIdentifier(roleName))
 	sqlStr += r.buildRoleOptions(ctx, &plan)
 
-	_, err := r.db.ExecContext(ctx, sqlStr)
+	// Use a transaction to ensure CREATE ROLE + GRANT memberships are atomic.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Error starting transaction", err.Error())
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	_, err = tx.ExecContext(ctx, sqlStr)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating role",
@@ -164,7 +207,7 @@ func (r *roleResource) Create(ctx context.Context, req resource.CreateRequest, r
 				pq.QuoteIdentifier(memberOf),
 				pq.QuoteIdentifier(roleName),
 			)
-			_, err := r.db.ExecContext(ctx, grantSQL)
+			_, err := tx.ExecContext(ctx, grantSQL)
 			if err != nil {
 				resp.Diagnostics.AddError(
 					"Error granting role membership",
@@ -173,6 +216,11 @@ func (r *roleResource) Create(ctx context.Context, req resource.CreateRequest, r
 				return
 			}
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		resp.Diagnostics.AddError("Error committing transaction", err.Error())
+		return
 	}
 
 	// Read back the role to populate computed attributes
@@ -193,10 +241,15 @@ func (r *roleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	diags := r.readRole(ctx, &state)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		// If the role no longer exists, remove from state
-		resp.State.RemoveResource(ctx)
+	if diags.HasError() {
+		// If the role no longer exists, remove it from state
+		for _, d := range diags {
+			if d.Summary() == "Role not found" {
+				resp.State.RemoveResource(ctx)
+				return
+			}
+		}
+		resp.Diagnostics.Append(diags...)
 		return
 	}
 
@@ -211,6 +264,14 @@ func (r *roleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	oldName := state.Name.ValueString()
 	newName := plan.Name.ValueString()
@@ -306,6 +367,14 @@ func (r *roleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
+	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	roleName := state.Name.ValueString()
 	sqlStr := fmt.Sprintf("DROP ROLE %s", pq.QuoteIdentifier(roleName))
 	_, err := r.db.ExecContext(ctx, sqlStr)
@@ -400,6 +469,13 @@ func (r *roleResource) readRole(ctx context.Context, model *roleResourceModel) d
 		&rolValidUntil,
 	)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			diags.AddError(
+				"Role not found",
+				fmt.Sprintf("Role %s does not exist.", roleName),
+			)
+			return diags
+		}
 		diags.AddError(
 			"Error reading role",
 			fmt.Sprintf("Could not read role %s: %s", roleName, err.Error()),
@@ -439,7 +515,7 @@ func (r *roleResource) readRole(ctx context.Context, model *roleResourceModel) d
 		)
 		return diags
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var memberOfRoles []attr.Value
 	for rows.Next() {

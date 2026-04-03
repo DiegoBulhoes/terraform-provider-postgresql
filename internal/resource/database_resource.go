@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -17,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/lib/pq"
 )
@@ -27,21 +31,22 @@ var (
 )
 
 type databaseResource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type databaseResourceModel struct {
-	Name             types.String `tfsdk:"name"`
-	Owner            types.String `tfsdk:"owner"`
-	Template         types.String `tfsdk:"template"`
-	Encoding         types.String `tfsdk:"encoding"`
-	LcCollate        types.String `tfsdk:"lc_collate"`
-	LcCtype          types.String `tfsdk:"lc_ctype"`
-	TablespaceName   types.String `tfsdk:"tablespace_name"`
-	ConnectionLimit  types.Int64  `tfsdk:"connection_limit"`
-	AllowConnections types.Bool   `tfsdk:"allow_connections"`
-	IsTemplate       types.Bool   `tfsdk:"is_template"`
-	OID              types.Int64  `tfsdk:"oid"`
+	Name             types.String   `tfsdk:"name"`
+	Owner            types.String   `tfsdk:"owner"`
+	Template         types.String   `tfsdk:"template"`
+	Encoding         types.String   `tfsdk:"encoding"`
+	LcCollate        types.String   `tfsdk:"lc_collate"`
+	LcCtype          types.String   `tfsdk:"lc_ctype"`
+	TablespaceName   types.String   `tfsdk:"tablespace_name"`
+	ConnectionLimit  types.Int64    `tfsdk:"connection_limit"`
+	AllowConnections types.Bool     `tfsdk:"allow_connections"`
+	IsTemplate       types.Bool     `tfsdk:"is_template"`
+	OID              types.Int64    `tfsdk:"oid"`
+	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
 
 func NewDatabaseResource() resource.Resource {
@@ -52,8 +57,9 @@ func (r *databaseResource) Metadata(_ context.Context, req resource.MetadataRequ
 	resp.TypeName = req.ProviderTypeName + "_database"
 }
 
-func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *databaseResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     0,
 		Description: "Manages a PostgreSQL database.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
@@ -61,6 +67,9 @@ func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 63),
 				},
 			},
 			"owner": schema.StringAttribute{
@@ -139,6 +148,13 @@ func (r *databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
+		},
 	}
 }
 
@@ -160,6 +176,14 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	dbName := plan.Name.ValueString()
 
@@ -257,6 +281,14 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	dbName := pq.QuoteIdentifier(plan.Name.ValueString())
 
 	// Update owner
@@ -325,6 +357,14 @@ func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	dbName := state.Name.ValueString()
 

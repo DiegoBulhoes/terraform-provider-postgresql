@@ -2,7 +2,6 @@ package datasource
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -18,7 +17,7 @@ var (
 )
 
 type schemasDataSource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type schemasDataSourceModel struct {
@@ -124,7 +123,6 @@ func (d *schemasDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	if common.IsSet(state.NotLikePattern) {
 		conditions = append(conditions, fmt.Sprintf(`s.nspname NOT LIKE $%d`, argIdx))
 		args = append(args, state.NotLikePattern.ValueString())
-		argIdx++
 	}
 
 	if len(conditions) > 0 {
@@ -144,7 +142,7 @@ func (d *schemasDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		resp.Diagnostics.AddError("Error querying schemas", fmt.Sprintf("Could not query schemas: %s", err.Error()))
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var schemaObjects []attr.Value
 	for rows.Next() {

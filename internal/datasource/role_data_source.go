@@ -18,7 +18,7 @@ var (
 )
 
 type roleDataSource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type roleDataSourceModel struct {
@@ -151,7 +151,7 @@ func (d *roleDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		resp.Diagnostics.AddError("Error reading role memberships", fmt.Sprintf("Could not read memberships for role %q: %s", name, err.Error()))
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var roleNames []attr.Value
 	for rows.Next() {

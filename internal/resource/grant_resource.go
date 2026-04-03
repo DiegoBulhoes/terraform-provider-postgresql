@@ -2,38 +2,47 @@ package resource
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/lib/pq"
 )
 
-var _ resource.Resource = (*grantResource)(nil)
+var (
+	_ resource.Resource                = (*grantResource)(nil)
+	_ resource.ResourceWithImportState = (*grantResource)(nil)
+)
 
 type grantResource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type grantResourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Role            types.String `tfsdk:"role"`
-	Database        types.String `tfsdk:"database"`
-	Schema          types.String `tfsdk:"schema"`
-	ObjectType      types.String `tfsdk:"object_type"`
-	Objects         types.List   `tfsdk:"objects"`
-	Privileges      types.Set    `tfsdk:"privileges"`
-	WithGrantOption types.Bool   `tfsdk:"with_grant_option"`
+	ID              types.String   `tfsdk:"id"`
+	Role            types.String   `tfsdk:"role"`
+	Database        types.String   `tfsdk:"database"`
+	Schema          types.String   `tfsdk:"schema"`
+	ObjectType      types.String   `tfsdk:"object_type"`
+	Objects         types.List     `tfsdk:"objects"`
+	Privileges      types.Set      `tfsdk:"privileges"`
+	WithGrantOption types.Bool     `tfsdk:"with_grant_option"`
+	Timeouts        timeouts.Value `tfsdk:"timeouts"`
 }
 
 func NewGrantResource() resource.Resource {
@@ -44,13 +53,17 @@ func (r *grantResource) Metadata(_ context.Context, req resource.MetadataRequest
 	resp.TypeName = req.ProviderTypeName + "_grant"
 }
 
-func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *grantResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     0,
 		Description: "Manages PostgreSQL GRANT privileges on database objects.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Composite identifier: {role}_{object_type}_{database}_{schema}.",
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"role": schema.StringAttribute{
 				Description: "The role to which privileges are granted.",
@@ -60,8 +73,8 @@ func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				},
 			},
 			"database": schema.StringAttribute{
-				Description: "The database on which to grant privileges.",
-				Optional:    true,
+				MarkdownDescription: "The database on which to grant privileges.\n\n~> **Note:** For database-level grants, the provider uses its configured connection. Ensure the provider is configured to connect to the correct database.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -79,6 +92,9 @@ func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("database", "schema", "table", "sequence", "function"),
+				},
 			},
 			"objects": schema.ListAttribute{
 				Description: "Specific object names to grant on. If empty, grants on all objects of the given type in the schema.",
@@ -92,6 +108,12 @@ func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: "The set of privileges to grant (e.g. SELECT, INSERT, USAGE, CREATE).",
 				Required:    true,
 				ElementType: types.StringType,
+				Validators: []validator.Set{
+					setvalidator.SizeAtLeast(1),
+					setvalidator.ValueStringsAre(
+						stringvalidator.LengthAtLeast(1),
+					),
+				},
 			},
 			"with_grant_option": schema.BoolAttribute{
 				Description: "Whether the grantee can grant the same privileges to others.",
@@ -99,6 +121,13 @@ func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Computed:    true,
 				Default:     booldefault.StaticBool(false),
 			},
+		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -121,6 +150,14 @@ func (r *grantResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	role := plan.Role.ValueString()
 	objectType := strings.ToLower(plan.ObjectType.ValueString())
@@ -301,7 +338,7 @@ func (r *grantResource) readPrivileges(ctx context.Context, role, objectType, da
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var privileges []string
 	allGrantable := true
@@ -335,6 +372,14 @@ func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	role := plan.Role.ValueString()
 	objectType := strings.ToLower(plan.ObjectType.ValueString())
@@ -384,6 +429,14 @@ func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
+	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	role := state.Role.ValueString()
 	objectType := strings.ToLower(state.ObjectType.ValueString())
 	database := state.Database.ValueString()
@@ -399,6 +452,36 @@ func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 			return
 		}
 	}
+}
+
+func (r *grantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import format: role/object_type/database/schema
+	// For database-level grants (no schema): role/object_type/database
+	parts := strings.Split(req.ID, "/")
+
+	if len(parts) < 3 || len(parts) > 4 {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			fmt.Sprintf("Expected format: role/object_type/database/schema or role/object_type/database. Got: %s", req.ID),
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("role"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("object_type"), parts[1])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("database"), parts[2])...)
+
+	if len(parts) == 4 {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("schema"), parts[3])...)
+	}
+
+	id := fmt.Sprintf("%s_%s_%s", parts[0], parts[1], parts[2])
+	if len(parts) == 4 {
+		id += "_" + parts[3]
+	} else {
+		id += "_"
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }
 
 // buildGrantStatements constructs GRANT SQL statements for the given object type.

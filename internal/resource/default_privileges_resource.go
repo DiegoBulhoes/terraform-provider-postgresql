@@ -2,13 +2,16 @@ package resource
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -20,8 +23,9 @@ import (
 )
 
 var (
-	_ resource.Resource              = (*defaultPrivilegesResource)(nil)
-	_ resource.ResourceWithConfigure = (*defaultPrivilegesResource)(nil)
+	_ resource.Resource                = (*defaultPrivilegesResource)(nil)
+	_ resource.ResourceWithConfigure   = (*defaultPrivilegesResource)(nil)
+	_ resource.ResourceWithImportState = (*defaultPrivilegesResource)(nil)
 )
 
 // defaultPrivObjTypeChars maps object type names to pg_default_acl.defaclobjtype characters.
@@ -40,17 +44,18 @@ var objectTypePlural = map[string]string{
 }
 
 type defaultPrivilegesResource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type defaultPrivilegesResourceModel struct {
-	ID         types.String `tfsdk:"id"`
-	Owner      types.String `tfsdk:"owner"`
-	Role       types.String `tfsdk:"role"`
-	Database   types.String `tfsdk:"database"`
-	Schema     types.String `tfsdk:"schema"`
-	ObjectType types.String `tfsdk:"object_type"`
-	Privileges types.Set    `tfsdk:"privileges"`
+	ID         types.String   `tfsdk:"id"`
+	Owner      types.String   `tfsdk:"owner"`
+	Role       types.String   `tfsdk:"role"`
+	Database   types.String   `tfsdk:"database"`
+	Schema     types.String   `tfsdk:"schema"`
+	ObjectType types.String   `tfsdk:"object_type"`
+	Privileges types.Set      `tfsdk:"privileges"`
+	Timeouts   timeouts.Value `tfsdk:"timeouts"`
 }
 
 func NewDefaultPrivilegesResource() resource.Resource {
@@ -61,13 +66,17 @@ func (r *defaultPrivilegesResource) Metadata(_ context.Context, req resource.Met
 	resp.TypeName = req.ProviderTypeName + "_default_privileges"
 }
 
-func (r *defaultPrivilegesResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *defaultPrivilegesResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     0,
 		Description: "Manages PostgreSQL default privileges using ALTER DEFAULT PRIVILEGES.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Composite identifier: {owner}_{role}_{database}_{schema}_{object_type}.",
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"owner": schema.StringAttribute{
 				Description: "Role that owns future objects.",
@@ -111,7 +120,20 @@ func (r *defaultPrivilegesResource) Schema(_ context.Context, _ resource.SchemaR
 				Description: "Set of privileges to grant as default privileges.",
 				Required:    true,
 				ElementType: types.StringType,
+				Validators: []validator.Set{
+					setvalidator.SizeAtLeast(1),
+					setvalidator.ValueStringsAre(
+						stringvalidator.LengthAtLeast(1),
+					),
+				},
 			},
+		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -134,6 +156,14 @@ func (r *defaultPrivilegesResource) Create(ctx context.Context, req resource.Cre
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, d := data.Timeouts.Create(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	privileges := common.PrivilegesToSlice(ctx, data.Privileges)
 
@@ -207,7 +237,7 @@ func (r *defaultPrivilegesResource) Read(ctx context.Context, req resource.ReadR
 		resp.Diagnostics.AddError("Error reading default privileges", err.Error())
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var privileges []string
 	hasRows := false
@@ -265,6 +295,14 @@ func (r *defaultPrivilegesResource) Update(ctx context.Context, req resource.Upd
 		return
 	}
 
+	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	plural := objectTypePlural[plan.ObjectType.ValueString()]
 
 	// Revoke old defaults first.
@@ -300,6 +338,14 @@ func (r *defaultPrivilegesResource) Delete(ctx context.Context, req resource.Del
 		return
 	}
 
+	deleteTimeout, d := data.Timeouts.Delete(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+
 	plural := objectTypePlural[data.ObjectType.ValueString()]
 	query := r.buildRevokeAllSQL(data.Owner.ValueString(), data.Role.ValueString(), data.Schema, plural)
 
@@ -312,21 +358,45 @@ func (r *defaultPrivilegesResource) Delete(ctx context.Context, req resource.Del
 	}
 }
 
+func (r *defaultPrivilegesResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Import format: owner/role/database/object_type or owner/role/database/schema/object_type
+	parts := strings.Split(req.ID, "/")
+
+	if len(parts) < 4 || len(parts) > 5 {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			fmt.Sprintf("Expected format: owner/role/database/object_type or owner/role/database/schema/object_type. Got: %s", req.ID),
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("owner"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("role"), parts[1])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("database"), parts[2])...)
+
+	if len(parts) == 5 {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("schema"), parts[3])...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("object_type"), parts[4])...)
+	} else {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("object_type"), parts[3])...)
+	}
+}
+
 // buildGrantSQL constructs an ALTER DEFAULT PRIVILEGES ... GRANT statement.
 func (r *defaultPrivilegesResource) buildGrantSQL(owner, role string, schemaAttr types.String, privileges []string, objectTypePlural string) string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner)))
+	fmt.Fprintf(&b, "ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner))
 
 	if common.IsSet(schemaAttr) {
-		b.WriteString(fmt.Sprintf(" IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString())))
+		fmt.Fprintf(&b, " IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString()))
 	}
 
-	b.WriteString(fmt.Sprintf(" GRANT %s ON %s TO %s",
+	fmt.Fprintf(&b, " GRANT %s ON %s TO %s",
 		strings.Join(privileges, ", "),
 		objectTypePlural,
 		pq.QuoteIdentifier(role),
-	))
+	)
 
 	return b.String()
 }
@@ -335,16 +405,16 @@ func (r *defaultPrivilegesResource) buildGrantSQL(owner, role string, schemaAttr
 func (r *defaultPrivilegesResource) buildRevokeAllSQL(owner, role string, schemaAttr types.String, objectTypePlural string) string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner)))
+	fmt.Fprintf(&b, "ALTER DEFAULT PRIVILEGES FOR ROLE %s", pq.QuoteIdentifier(owner))
 
 	if common.IsSet(schemaAttr) {
-		b.WriteString(fmt.Sprintf(" IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString())))
+		fmt.Fprintf(&b, " IN SCHEMA %s", pq.QuoteIdentifier(schemaAttr.ValueString()))
 	}
 
-	b.WriteString(fmt.Sprintf(" REVOKE ALL ON %s FROM %s",
+	fmt.Fprintf(&b, " REVOKE ALL ON %s FROM %s",
 		objectTypePlural,
 		pq.QuoteIdentifier(role),
-	))
+	)
 
 	return b.String()
 }

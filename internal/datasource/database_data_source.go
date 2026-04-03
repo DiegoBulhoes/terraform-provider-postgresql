@@ -2,7 +2,6 @@ package datasource
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -17,7 +16,7 @@ var (
 )
 
 type databaseDataSource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type databaseDataSourceModel struct {

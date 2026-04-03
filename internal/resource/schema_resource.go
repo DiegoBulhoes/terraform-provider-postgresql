@@ -5,14 +5,18 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/lib/pq"
@@ -24,14 +28,15 @@ var (
 )
 
 type schemaResource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type schemaResourceModel struct {
-	Name        types.String `tfsdk:"name"`
-	Database    types.String `tfsdk:"database"`
-	Owner       types.String `tfsdk:"owner"`
-	IfNotExists types.Bool   `tfsdk:"if_not_exists"`
+	Name        types.String   `tfsdk:"name"`
+	Database    types.String   `tfsdk:"database"`
+	Owner       types.String   `tfsdk:"owner"`
+	IfNotExists types.Bool     `tfsdk:"if_not_exists"`
+	Timeouts    timeouts.Value `tfsdk:"timeouts"`
 }
 
 func NewSchemaResource() resource.Resource {
@@ -42,18 +47,22 @@ func (r *schemaResource) Metadata(_ context.Context, req resource.MetadataReques
 	resp.TypeName = req.ProviderTypeName + "_schema"
 }
 
-func (r *schemaResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *schemaResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     0,
 		Description: "Manages a PostgreSQL schema.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Description: "The name of the schema.",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 63),
+				},
 			},
 			"database": schema.StringAttribute{
-				Description: "The database where the schema resides. Defaults to the provider's configured database. Changing this forces a new resource.",
-				Optional:    true,
-				Computed:    true,
+				MarkdownDescription: "The database where the schema resides. Defaults to the provider's configured database. Changing this forces a new resource.\n\n~> **Note:** The provider uses its configured connection and does not open a separate connection to this database. Ensure the provider is configured to connect to the correct database.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
@@ -70,6 +79,13 @@ func (r *schemaResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:    true,
 				Default:     booldefault.StaticBool(false),
 			},
+		},
+		Blocks: map[string]schema.Block{
+			"timeouts": timeouts.Block(ctx, timeouts.Opts{
+				Create: true,
+				Update: true,
+				Delete: true,
+			}),
 		},
 	}
 }
@@ -92,6 +108,14 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	schemaName := plan.Name.ValueString()
 
@@ -204,6 +228,14 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	oldName := state.Name.ValueString()
 	newName := plan.Name.ValueString()
 
@@ -270,6 +302,14 @@ func (r *schemaResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	schemaName := state.Name.ValueString()
 
