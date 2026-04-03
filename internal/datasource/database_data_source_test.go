@@ -1,15 +1,18 @@
-package provider
+// Tests for postgresql_database data source.
+package datasource_test
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestAccPostgresqlDatabaseDataSource_basic(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -33,7 +36,7 @@ data "postgresql_database" "test" {
 
 func TestAccPostgresqlDatabaseDataSource_allAttributes(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -62,7 +65,7 @@ func TestAccPostgresqlDatabaseDataSource_custom(t *testing.T) {
 	rName := "acctest_db_ds_custom"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -84,6 +87,22 @@ data "postgresql_database" "test" {
 					resource.TestCheckResourceAttrSet("data.postgresql_database.test", "owner"),
 					resource.TestCheckResourceAttrSet("data.postgresql_database.test", "oid"),
 				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabaseDataSource_nonExistent(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				data "postgresql_database" "test" {
+					name = "nonexistent_database_12345"
+				}`,
+				ExpectError: regexp.MustCompile(`not found|does not exist|Error reading database`),
 			},
 		},
 	})

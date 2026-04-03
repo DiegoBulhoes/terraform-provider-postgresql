@@ -1,10 +1,13 @@
-package provider
+// Tests for postgresql_database resource.
+package resource_test
 
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"testing"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
@@ -13,7 +16,7 @@ func TestAccPostgresqlDatabase_basic(t *testing.T) {
 	rName := "acctest_db_basic"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -48,7 +51,7 @@ func TestAccPostgresqlDatabase_full(t *testing.T) {
 	ownerRole := "acctest_db_full_owner"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -77,7 +80,7 @@ func TestAccPostgresqlDatabase_update(t *testing.T) {
 	newOwnerRole := "acctest_db_upd_newowner"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -104,7 +107,7 @@ func TestAccPostgresqlDatabase_withLocale(t *testing.T) {
 	rName := "acctest_db_locale"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -141,7 +144,7 @@ func TestAccPostgresqlDatabase_isTemplate(t *testing.T) {
 	rName := "acctest_db_tmpl"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -159,7 +162,7 @@ func TestAccPostgresqlDatabase_updateFlags(t *testing.T) {
 	rName := "acctest_db_flags"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -189,8 +192,169 @@ func TestAccPostgresqlDatabase_updateFlags(t *testing.T) {
 	})
 }
 
+func TestAccPostgresqlDatabase_emptyName(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      `resource "postgresql_database" "test" { name = "" }`,
+				ExpectError: regexp.MustCompile(`must be between 1 and 63`),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_invalidTemplate(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `resource "postgresql_database" "test" {
+					name     = "acctest_db_inv_tmpl"
+					template = "nonexistent_template"
+				}`,
+				ExpectError: regexp.MustCompile(`template database .* does not exist|Error creating database`),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_connectionLimitUpdate(t *testing.T) {
+	rName := "acctest_db_connlimit"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name             = %q
+					connection_limit = 10
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "connection_limit", "10"),
+			},
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name             = %q
+					connection_limit = 50
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "connection_limit", "50"),
+			},
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name             = %q
+					connection_limit = -1
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "connection_limit", "-1"),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_disappears(t *testing.T) {
+	rName := "acctest_db_disappears"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" { name = %q }`, rName),
+				Check:  resource.TestCheckResourceAttr("postgresql_database.test", "name", rName),
+			},
+			{
+				PreConfig: func() {
+					db, _ := acctest.GetDB()
+					db.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, rName))
+				},
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" { name = %q }`, rName),
+				Check:  resource.TestCheckResourceAttr("postgresql_database.test", "name", rName),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_ownerChange(t *testing.T) {
+	rName := "acctest_db_ownchg"
+	owner1 := "acctest_db_ownchg_o1"
+	owner2 := "acctest_db_ownchg_o2"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccPostgresqlDatabaseConfig_forUpdate(rName, owner1, owner2, false, -1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("postgresql_database.test", "name", rName),
+					resource.TestCheckResourceAttr("postgresql_database.test", "owner", owner1),
+				),
+			},
+			{
+				Config: testAccPostgresqlDatabaseConfig_forUpdate(rName, owner1, owner2, true, 25),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("postgresql_database.test", "owner", owner2),
+					resource.TestCheckResourceAttr("postgresql_database.test", "connection_limit", "25"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_templateIsTemplateLifecycle(t *testing.T) {
+	rName := "acctest_db_tmpl_lifecycle"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name        = %q
+					is_template = true
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "is_template", "true"),
+			},
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name        = %q
+					is_template = false
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "is_template", "false"),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDatabase_allowConnectionsToggle(t *testing.T) {
+	rName := "acctest_db_allowconn"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name              = %q
+					allow_connections = true
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "allow_connections", "true"),
+			},
+			{
+				Config: fmt.Sprintf(`resource "postgresql_database" "test" {
+					name              = %q
+					allow_connections = false
+				}`, rName),
+				Check: resource.TestCheckResourceAttr("postgresql_database.test", "allow_connections", "false"),
+			},
+		},
+	})
+}
+
 func testAccCheckPostgresqlDatabaseDestroy(s *terraform.State) error {
-	db, err := testAccGetDB()
+	db, err := acctest.GetDB()
 	if err != nil {
 		return fmt.Errorf("error getting test database connection: %s", err)
 	}

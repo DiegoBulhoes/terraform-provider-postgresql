@@ -1,15 +1,17 @@
-package provider
+// Tests for postgresql_schemas data source.
+package datasource_test
 
 import (
 	"fmt"
 	"testing"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestAccPostgresqlSchemasDataSource_basic(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -27,7 +29,7 @@ data "postgresql_schemas" "test" {
 
 func TestAccPostgresqlSchemasDataSource_withPattern(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -48,7 +50,7 @@ func TestAccPostgresqlSchemasDataSource_notLikePattern(t *testing.T) {
 	rSchema := "acctest_schemas_ds_nlp"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -76,7 +78,7 @@ func TestAccPostgresqlSchemasDataSource_combinedFilters(t *testing.T) {
 	rSchema3 := "acctest_schemas_cf_other"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -111,7 +113,7 @@ func TestAccPostgresqlSchemasDataSource_verifyAttributes(t *testing.T) {
 	rSchema := "acctest_schemas_va"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -137,7 +139,7 @@ data "postgresql_schemas" "test" {
 
 func TestAccPostgresqlSchemasDataSource_includeSystem(t *testing.T) {
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -149,6 +151,23 @@ data "postgresql_schemas" "test" {
 					// With system schemas, we should have pg_catalog, information_schema, etc.
 					resource.TestCheckResourceAttrSet("data.postgresql_schemas.test", "schemas.#"),
 				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlSchemasDataSource_emptyResult(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				data "postgresql_schemas" "test" {
+					like_pattern           = "zzz_nonexistent_%"
+					include_system_schemas = false
+				}`,
+				Check: resource.TestCheckResourceAttr("data.postgresql_schemas.test", "schemas.#", "0"),
 			},
 		},
 	})

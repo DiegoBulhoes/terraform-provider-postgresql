@@ -1,16 +1,19 @@
-package provider
+// Tests for postgresql_role data source.
+package datasource_test
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
 func TestAccPostgresqlRoleDataSource_basic(t *testing.T) {
 	rName := "acctest_role_ds"
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -43,7 +46,7 @@ func TestAccPostgresqlRoleDataSource_withMembership(t *testing.T) {
 	parentRole := "acctest_role_ds_parent"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -76,7 +79,7 @@ func TestAccPostgresqlRoleDataSource_fullAttributes(t *testing.T) {
 	rName := "acctest_role_ds_full"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -111,7 +114,7 @@ func TestAccPostgresqlRoleDataSource_noLogin(t *testing.T) {
 	rName := "acctest_role_ds_nologin"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`
@@ -132,6 +135,22 @@ data "postgresql_role" "test" {
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "replication", "false"),
 					resource.TestCheckResourceAttr("data.postgresql_role.test", "connection_limit", "-1"),
 				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlRoleDataSource_nonExistent(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				data "postgresql_role" "test" {
+					name = "nonexistent_role_12345"
+				}`,
+				ExpectError: regexp.MustCompile(`not found|does not exist|Error reading role`),
 			},
 		},
 	})

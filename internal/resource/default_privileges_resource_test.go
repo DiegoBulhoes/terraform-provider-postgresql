@@ -1,9 +1,12 @@
-package provider
+// Tests for postgresql_default_privileges resource.
+package resource_test
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
+	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
@@ -15,7 +18,7 @@ func TestAccPostgresqlDefaultPrivileges_basic(t *testing.T) {
 	rSchema := "acctest_defpriv_schema"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -41,7 +44,7 @@ func TestAccPostgresqlDefaultPrivileges_sequence(t *testing.T) {
 	rSchema := "acctest_defpriv_seq_sch"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -62,7 +65,7 @@ func TestAccPostgresqlDefaultPrivileges_function(t *testing.T) {
 	rSchema := "acctest_defpriv_fn_sch"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -83,7 +86,7 @@ func TestAccPostgresqlDefaultPrivileges_type(t *testing.T) {
 	rSchema := "acctest_defpriv_tp_sch"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -103,7 +106,7 @@ func TestAccPostgresqlDefaultPrivileges_databaseWide(t *testing.T) {
 	rDB := "acctest_defpriv_dbw_db"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -126,7 +129,7 @@ func TestAccPostgresqlDefaultPrivileges_tableAllPrivileges(t *testing.T) {
 	rSchema := "acctest_defpriv_ta_sch"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -171,7 +174,7 @@ func TestAccPostgresqlDefaultPrivileges_update(t *testing.T) {
 	rSchema := "acctest_defpriv_upd_sch"
 
 	resource.ParallelTest(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		ProtoV6ProviderFactories: testProviderFactories,
 		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -190,8 +193,169 @@ func TestAccPostgresqlDefaultPrivileges_update(t *testing.T) {
 	})
 }
 
+func TestAccPostgresqlDefaultPrivileges_invalidObjectType(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				resource "postgresql_default_privileges" "test" {
+					owner       = "postgres"
+					role        = "postgres"
+					database    = "postgres"
+					object_type = "invalid"
+					privileges  = ["SELECT"]
+				}`,
+				ExpectError: regexp.MustCompile(`must be one of`),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDefaultPrivileges_emptyPrivileges(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				resource "postgresql_default_privileges" "test" {
+					owner       = "postgres"
+					role        = "postgres"
+					database    = "postgres"
+					object_type = "table"
+					privileges  = []
+				}`,
+				ExpectError: regexp.MustCompile(`must contain at least 1`),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDefaultPrivileges_import(t *testing.T) {
+	rOwner := "acctest_defpriv_imp_owner"
+	rGrantee := "acctest_defpriv_imp_grant"
+	rDB := "acctest_defpriv_imp_db"
+	rSchema := "acctest_defpriv_imp_sch"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccPostgresqlDefaultPrivilegesConfig_basic(rOwner, rGrantee, rDB, rSchema),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("postgresql_default_privileges.test", "owner", rOwner),
+					resource.TestCheckResourceAttr("postgresql_default_privileges.test", "object_type", "table"),
+				),
+			},
+			{
+				ResourceName:      "postgresql_default_privileges.test",
+				ImportState:       true,
+				ImportStateId:     fmt.Sprintf("%s/%s/%s/%s/table", rOwner, rGrantee, rDB, rSchema),
+				ImportStateVerify: false,
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDefaultPrivileges_disappears(t *testing.T) {
+	rOwner := "acctest_dp_disapp_own"
+	rGrantee := "acctest_dp_disapp_grt"
+	rDB := "acctest_dp_disapp_db"
+	rSchema := "acctest_dp_disapp_sch"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccPostgresqlDefaultPrivilegesConfig_basic(rOwner, rGrantee, rDB, rSchema),
+				Check:  resource.TestCheckResourceAttrSet("postgresql_default_privileges.test", "id"),
+			},
+			{
+				PreConfig: func() {
+					db, _ := acctest.GetDB()
+					db.Exec(fmt.Sprintf(
+						`ALTER DEFAULT PRIVILEGES FOR ROLE "%s" IN SCHEMA "%s" REVOKE ALL ON TABLES FROM "%s"`,
+						rOwner, rSchema, rGrantee,
+					))
+				},
+				Config: testAccPostgresqlDefaultPrivilegesConfig_basic(rOwner, rGrantee, rDB, rSchema),
+				Check:  resource.TestCheckResourceAttrSet("postgresql_default_privileges.test", "id"),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlDefaultPrivileges_updatePrivileges(t *testing.T) {
+	rOwner := "acctest_dp_upd_own"
+	rGrantee := "acctest_dp_upd_grt"
+	rDB := "acctest_dp_upd_db"
+	rSchema := "acctest_dp_upd_sch"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy:             testAccCheckPostgresqlDefaultPrivilegesDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+				resource "postgresql_role" "owner" { name = %q }
+				resource "postgresql_role" "grantee" { name = %q }
+				resource "postgresql_database" "test" { name = %q }
+				resource "postgresql_schema" "test" { name = %q }
+				resource "postgresql_default_privileges" "test" {
+					owner       = postgresql_role.owner.name
+					role        = postgresql_role.grantee.name
+					database    = postgresql_database.test.name
+					schema      = postgresql_schema.test.name
+					object_type = "table"
+					privileges  = ["SELECT"]
+				}`, rOwner, rGrantee, rDB, rSchema),
+				Check: resource.TestCheckResourceAttr("postgresql_default_privileges.test", "privileges.#", "1"),
+			},
+			{
+				Config: fmt.Sprintf(`
+				resource "postgresql_role" "owner" { name = %q }
+				resource "postgresql_role" "grantee" { name = %q }
+				resource "postgresql_database" "test" { name = %q }
+				resource "postgresql_schema" "test" { name = %q }
+				resource "postgresql_default_privileges" "test" {
+					owner       = postgresql_role.owner.name
+					role        = postgresql_role.grantee.name
+					database    = postgresql_database.test.name
+					schema      = postgresql_schema.test.name
+					object_type = "table"
+					privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+				}`, rOwner, rGrantee, rDB, rSchema),
+				Check: resource.TestCheckResourceAttr("postgresql_default_privileges.test", "privileges.#", "4"),
+			},
+			{
+				Config: fmt.Sprintf(`
+				resource "postgresql_role" "owner" { name = %q }
+				resource "postgresql_role" "grantee" { name = %q }
+				resource "postgresql_database" "test" { name = %q }
+				resource "postgresql_schema" "test" { name = %q }
+				resource "postgresql_default_privileges" "test" {
+					owner       = postgresql_role.owner.name
+					role        = postgresql_role.grantee.name
+					database    = postgresql_database.test.name
+					schema      = postgresql_schema.test.name
+					object_type = "table"
+					privileges  = ["SELECT"]
+				}`, rOwner, rGrantee, rDB, rSchema),
+				Check: resource.TestCheckResourceAttr("postgresql_default_privileges.test", "privileges.#", "1"),
+			},
+		},
+	})
+}
+
 func testAccCheckPostgresqlDefaultPrivilegesDestroy(s *terraform.State) error {
-	db, err := testAccGetDB()
+	db, err := acctest.GetDB()
 	if err != nil {
 		return fmt.Errorf("error getting test database connection: %s", err)
 	}
