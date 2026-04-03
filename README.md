@@ -7,8 +7,8 @@ Terraform provider for managing PostgreSQL resources: roles, databases, schemas,
 ## Requirements
 
 - [Terraform](https://www.terraform.io/downloads) >= 1.0
-- [Go](https://go.dev/dl/) >= 1.25 (for building)
-- PostgreSQL >= 12
+- [Go](https://go.dev/dl/) >= 1.26 (for building)
+- PostgreSQL >= 14
 
 ## Installation
 
@@ -17,7 +17,7 @@ terraform {
   required_providers {
     postgresql = {
       source  = "DiegoBulhoes/postgresql"
-      version = "~> 0.1"
+      version = "~> 0.2"
     }
   }
 }
