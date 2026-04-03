@@ -53,9 +53,13 @@ The provider also accepts configuration via environment variables: `PGHOST`, `PG
 | Data Source | Description |
 |---|---|
 | [`postgresql_role`](docs/data-sources/role.md) | Reads role attributes |
+| [`postgresql_roles`](docs/data-sources/roles.md) | Lists roles with filters |
 | [`postgresql_database`](docs/data-sources/database.md) | Reads database attributes |
 | [`postgresql_schemas`](docs/data-sources/schemas.md) | Lists schemas with filters |
-| [`postgresql_query`](docs/data-sources/query.md) | Executes a SELECT query and returns results |
+| [`postgresql_tables`](docs/data-sources/tables.md) | Lists tables with filters |
+| [`postgresql_extensions`](docs/data-sources/extensions.md) | Lists installed extensions |
+| [`postgresql_version`](docs/data-sources/version.md) | Reads server version info |
+| [`postgresql_query`](docs/data-sources/query.md) | Executes a SQL query and returns results |
 
 ## Examples
 
