@@ -19,13 +19,14 @@ var (
 )
 
 type queryDataSource struct {
-	db *sql.DB
+	db common.DBTX
 }
 
 type queryDataSourceModel struct {
-	Query    types.String `tfsdk:"query"`
-	Database types.String `tfsdk:"database"`
-	Rows     types.List   `tfsdk:"rows"`
+	Query            types.String `tfsdk:"query"`
+	Database         types.String `tfsdk:"database"`
+	AllowDestructive types.Bool   `tfsdk:"allow_destructive"`
+	Rows             types.List   `tfsdk:"rows"`
 }
 
 func NewQueryDataSource() datasource.DataSource {
@@ -38,15 +39,19 @@ func (d *queryDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 func (d *queryDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Executes a read-only SQL query and returns the results.",
+		Description: "Executes a SQL query and returns the results. By default, only SELECT queries (including CTEs with WITH) are allowed and run inside a read-only transaction for safety. Set `allow_destructive = true` to permit DML/DDL statements.",
 		Attributes: map[string]schema.Attribute{
 			"query": schema.StringAttribute{
-				Description: "The SQL SELECT query to execute.",
+				Description: "The SQL query to execute. By default, must be a SELECT statement or a CTE starting with WITH. Set `allow_destructive = true` to allow other statements.",
 				Required:    true,
 			},
 			"database": schema.StringAttribute{
 				Description: "The database to execute the query against.",
 				Required:    true,
+			},
+			"allow_destructive": schema.BoolAttribute{
+				Description: "When true, allows DML (INSERT, UPDATE, DELETE) and DDL (CREATE, DROP, ALTER) queries. By default only SELECT is permitted. Use with caution.",
+				Optional:    true,
 			},
 			"rows": schema.ListAttribute{
 				Description: "The query result rows. Each row is a map of column name to string value.",
@@ -77,23 +82,36 @@ func (d *queryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	queryStr := state.Query.ValueString()
+	allowDestructive := state.AllowDestructive.ValueBool() // false when null/unknown
 
-	// Validate that the query is a SELECT statement to prevent mutations.
+	// Validate that the query looks like a SELECT statement (unless destructive is allowed).
 	trimmed := strings.TrimSpace(queryStr)
-	if !strings.HasPrefix(strings.ToUpper(trimmed), "SELECT") {
+	upper := strings.ToUpper(trimmed)
+	if !allowDestructive &&
+		!strings.HasPrefix(upper, "SELECT") &&
+		!strings.HasPrefix(upper, "WITH") {
 		resp.Diagnostics.AddError(
 			"Invalid Query",
-			"Only SELECT queries are allowed. The query must start with SELECT.",
+			"Only SELECT queries are allowed. The query must start with SELECT or WITH (CTE). Set `allow_destructive = true` to allow other statements.",
 		)
 		return
 	}
 
-	rows, err := d.db.QueryContext(ctx, queryStr)
+	// Execute inside a transaction. Read-only unless destructive is explicitly allowed.
+	txOpts := &sql.TxOptions{ReadOnly: !allowDestructive}
+	tx, err := d.db.BeginTx(ctx, txOpts)
+	if err != nil {
+		resp.Diagnostics.AddError("Error starting transaction", err.Error())
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, queryStr)
 	if err != nil {
 		resp.Diagnostics.AddError("Error executing query", fmt.Sprintf("Could not execute query: %s", err.Error()))
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	columns, err := rows.Columns()
 	if err != nil {
@@ -144,6 +162,13 @@ func (d *queryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 	state.Rows = rowsList
+
+	// Commit the transaction so destructive queries take effect.
+	// For read-only transactions this is a no-op.
+	if err := tx.Commit(); err != nil {
+		resp.Diagnostics.AddError("Error committing transaction", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

@@ -9,7 +9,11 @@ description: |-
 
 Executes a read-only SQL query and returns the results. This data source is useful for querying PostgreSQL catalog tables or running custom read-only queries.
 
+~> **Security:** By default, this data source only allows `SELECT` queries (including CTEs with `WITH`). Queries that attempt DML (`INSERT`, `UPDATE`, `DELETE`) or DDL (`CREATE`, `DROP`, `ALTER`) are **rejected**. All queries run inside a **read-only transaction**, so even if a query bypasses the prefix check, PostgreSQL itself will block any write operation. To allow destructive queries, you must explicitly set `allow_destructive = true`.
+
 ## Example Usage
+
+### Read-only query (default)
 
 ```terraform
 # Query the PostgreSQL version
@@ -49,18 +53,20 @@ data "postgresql_query" "table_sizes" {
 output "largest_tables" {
   value = data.postgresql_query.table_sizes.rows
 }
+```
 
-# List installed extensions
-data "postgresql_query" "extensions" {
-  database = "my_application"
-  query    = "SELECT extname, extversion FROM pg_extension ORDER BY extname"
+### Destructive query (opt-in)
+
+```terraform
+# Clean up expired sessions — requires allow_destructive
+data "postgresql_query" "cleanup" {
+  database          = "my_application"
+  query             = "DELETE FROM sessions WHERE expired_at < now() RETURNING id"
+  allow_destructive = true
 }
 
-output "installed_extensions" {
-  value = {
-    for row in data.postgresql_query.extensions.rows :
-    row["extname"] => row["extversion"]
-  }
+output "deleted_session_ids" {
+  value = data.postgresql_query.cleanup.rows
 }
 ```
 
@@ -70,7 +76,11 @@ output "installed_extensions" {
 ### Required
 
 - `database` (String) The database to execute the query against.
-- `query` (String) The SQL SELECT query to execute.
+- `query` (String) The SQL query to execute. By default, must be a SELECT statement or a CTE starting with WITH. Set `allow_destructive = true` to allow other statements.
+
+### Optional
+
+- `allow_destructive` (Boolean) When true, allows DML (INSERT, UPDATE, DELETE) and DDL (CREATE, DROP, ALTER) queries. By default only SELECT is permitted. Use with caution.
 
 ### Read-Only
 

@@ -9,6 +9,8 @@ description: |-
 
 Executes a read-only SQL query and returns the results. This data source is useful for querying PostgreSQL catalog tables or running custom read-only queries.
 
+~> **Security:** By default, this data source only allows `SELECT` queries (including CTEs with `WITH`). Queries that attempt DML (`INSERT`, `UPDATE`, `DELETE`) or DDL (`CREATE`, `DROP`, `ALTER`) are **rejected**. All queries run inside a **read-only transaction**, so even if a query bypasses the prefix check, PostgreSQL itself will block any write operation. To allow destructive queries, you must explicitly set `allow_destructive = true`.
+
 ## Example Usage
 
 {{tffile "examples/data-sources/postgresql_query/data-source.tf"}}
