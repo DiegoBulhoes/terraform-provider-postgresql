@@ -9,6 +9,7 @@ permissions:
   contents: read
 
 jobs:
+  # Layer 1: fast checks (parallel)
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -59,9 +60,11 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  # Layer 2: unit tests (needs all layer 1 to pass)
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
+    needs: [lint, docs-validate, govulncheck]
     steps:
       - uses: actions/checkout@v6
 
@@ -72,10 +75,11 @@ jobs:
       - name: Run unit tests
         run: go test -race ./...
 
+  # Layer 3: acceptance tests (needs unit to pass)
   acceptance:
     name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
     runs-on: ubuntu-latest
-    needs: [lint, unit]
+    needs: [unit]
     strategy:
       fail-fast: false
       matrix:
