@@ -16,3 +16,9 @@ Manages PostgreSQL GRANT privileges on database objects such as databases, schem
 {{tffile "examples/resources/postgresql_grant/resource.tf"}}
 
 {{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Grants can be imported using the format `role/object_type/database/schema`:
+
+{{codefile "shell" "examples/resources/postgresql_grant/import.sh"}}

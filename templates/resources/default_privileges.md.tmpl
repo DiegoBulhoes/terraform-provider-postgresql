@@ -16,3 +16,9 @@ Manages PostgreSQL default privileges using `ALTER DEFAULT PRIVILEGES`. Default 
 {{tffile "examples/resources/postgresql_default_privileges/resource.tf"}}
 
 {{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Default privileges can be imported using `owner/role/database/schema/object_type` or `owner/role/database/object_type`:
+
+{{codefile "shell" "examples/resources/postgresql_default_privileges/import.sh"}}

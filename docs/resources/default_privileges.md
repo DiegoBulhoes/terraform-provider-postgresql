@@ -131,3 +131,15 @@ Optional:
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
+
+## Import
+
+Default privileges can be imported using `owner/role/database/schema/object_type` or `owner/role/database/object_type`:
+
+```shell
+# Import with schema: owner/role/database/schema/object_type
+terraform import postgresql_default_privileges.tables "app_owner/readonly/my_application/public/table"
+
+# Import without schema (database-wide): owner/role/database/object_type
+terraform import postgresql_default_privileges.global "app_owner/readonly/my_application/table"
+```
