@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs docs-validate
+.PHONY: build test lint clean install fmt vet testacc testacc-cover cover-html docs docs-validate changelog tidy
 
 BINARY_NAME=terraform-provider-postgresql
 GO=go
@@ -13,35 +13,31 @@ install:
 test:
 	$(GO) test -v -race -coverprofile=coverage.out ./...
 
-testacc:
-	TF_ACC=1 $(GO) test -v -timeout 600s -parallel 1 ./internal/provider/
-
 testacc-cover:
-	TF_ACC=1 $(GO) test -timeout 600s -parallel 1 -coverprofile=coverage.out ./internal/provider/
+	TF_ACC=1 $(GO) test -timeout 600s -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out | tail -1
 
 cover-html: coverage.out
+	rm -f $(BINARY_NAME) coverage.out coverage.html
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Open coverage.html in your browser"
 
 fmt:
 	$(GO) fmt ./...
-	goimports -w .
+	$(GO) tool goimports -w .
 
 vet:
 	$(GO) vet ./...
 
 lint: vet
-	golangci-lint run ./...
-
-clean:
-	rm -f $(BINARY_NAME) coverage.out
+	$(GO) tool golangci-lint run ./...
 
 tidy:
 	$(GO) mod tidy
 
 docs:
-	tfplugindocs generate
+	$(GO) tool tfplugindocs validate
+	$(GO) tool tfplugindocs generate
 
-docs-validate:
-	tfplugindocs validate
+changelog:
+	git-cliff -o CHANGELOG.md
