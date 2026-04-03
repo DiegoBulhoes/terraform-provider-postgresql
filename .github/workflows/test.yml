@@ -9,9 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  # Layer 1: fast checks (parallel)
-  lint:
-    name: Lint
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -31,28 +30,8 @@ jobs:
       - name: Run golangci-lint
         run: go tool golangci-lint run ./...
 
-  docs-validate:
-    name: Validate Docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
       - name: Validate documentation
         run: go tool tfplugindocs validate
-
-  govulncheck:
-    name: Vulnerability Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -60,11 +39,10 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
-  # Layer 2: unit tests (needs all layer 1 to pass)
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: [lint, docs-validate, govulncheck]
+    needs: [checks]
     steps:
       - uses: actions/checkout@v6
 
@@ -75,7 +53,6 @@ jobs:
       - name: Run unit tests
         run: go test -race ./...
 
-  # Layer 3: acceptance tests (needs unit to pass)
   acceptance:
     name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
     runs-on: ubuntu-latest
@@ -95,7 +72,7 @@ jobs:
         env:
           TF_ACC: "1"
           POSTGRES_IMAGE: "postgres:${{ matrix.postgres_version }}-alpine"
-        run: go test -timeout 600s -coverprofile=coverage.out ./...
+        run: go test -tags integration -timeout 600s -coverprofile=coverage.out ./...
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out | tail -1
