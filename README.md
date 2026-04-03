@@ -2,7 +2,7 @@
 
 > 🚧 **This provider is under active development.** Some features may change before the first stable release.
 
-Terraform provider for managing PostgreSQL resources: roles, databases, schemas, grants, and default privileges.
+Terraform provider for managing PostgreSQL resources: roles, users, databases, schemas, and grants.
 
 ## Requirements
 
@@ -42,17 +42,18 @@ The provider also accepts configuration via environment variables: `PGHOST`, `PG
 
 | Resource | Description |
 |---|---|
-| [`postgresql_role`](docs/resources/role.md) | Manages roles (users/groups) |
+| [`postgresql_role`](docs/resources/role.md) | Manages roles (permission groups with inline privileges) |
+| [`postgresql_user`](docs/resources/user.md) | Manages users (login roles with role memberships) |
 | [`postgresql_database`](docs/resources/database.md) | Manages databases |
 | [`postgresql_schema`](docs/resources/schema.md) | Manages schemas |
 | [`postgresql_grant`](docs/resources/grant.md) | Manages GRANT privileges on objects |
-| [`postgresql_default_privileges`](docs/resources/default_privileges.md) | Manages ALTER DEFAULT PRIVILEGES |
 
 ## Data Sources
 
 | Data Source | Description |
 |---|---|
 | [`postgresql_role`](docs/data-sources/role.md) | Reads role attributes |
+| [`postgresql_user`](docs/data-sources/user.md) | Reads user attributes |
 | [`postgresql_roles`](docs/data-sources/roles.md) | Lists roles with filters |
 | [`postgresql_database`](docs/data-sources/database.md) | Reads database attributes |
 | [`postgresql_schemas`](docs/data-sources/schemas.md) | Lists schemas with filters |
@@ -63,19 +64,28 @@ The provider also accepts configuration via environment variables: `PGHOST`, `PG
 
 ## Examples
 
-### Create a role and database
+### Create a role, user, and database
 
 ```hcl
-resource "postgresql_role" "app" {
-  name            = "app_user"
-  login           = true
-  password        = "secret"
-  create_database = false
+resource "postgresql_role" "app_role" {
+  name = "app_role"
+
+  privilege {
+    privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+    object_type = "table"
+    schema      = "public"
+  }
+}
+
+resource "postgresql_user" "app" {
+  name     = "app_user"
+  password = "secret"
+  roles    = [postgresql_role.app_role.name]
 }
 
 resource "postgresql_database" "app" {
   name     = "app_db"
-  owner    = postgresql_role.app.name
+  owner    = postgresql_user.app.name
   encoding = "UTF8"
 }
 ```
@@ -85,23 +95,14 @@ resource "postgresql_database" "app" {
 ```hcl
 resource "postgresql_schema" "app" {
   name  = "app_schema"
-  owner = postgresql_role.app.name
+  owner = postgresql_user.app.name
 }
 
 resource "postgresql_grant" "app_schema" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   object_type = "schema"
   schema      = postgresql_schema.app.name
   privileges  = ["USAGE", "CREATE"]
-}
-
-resource "postgresql_default_privileges" "tables" {
-  owner       = postgresql_role.app.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = postgresql_schema.app.name
-  object_type = "table"
-  privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
 }
 ```
 
@@ -150,10 +151,7 @@ make build
 Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker. Requires Docker running.
 
 ```bash
-make test             # Unit tests only (no Docker needed)
-make testacc          # Acceptance tests (PG 14, 15, 16, 17)
-make testacc-cover    # With coverage
-make cover-html       # Generate HTML coverage report
+make test             # Unit + acceptance tests (PG 14, 15, 16, 17)
 ```
 
 See [TESTING.md](TESTING.md) for more details.
@@ -183,6 +181,11 @@ Documentation is generated from templates in `templates/` and examples in `examp
 │   ├── resource/                        # Resources
 │   ├── datasource/                      # Data Sources
 │   └── common/                          # Shared helpers
+├── test/
+│   ├── acctest/                         # Acceptance test infrastructure
+│   ├── mocks/                           # Generated GoMock mocks
+│   ├── unit/                            # Unit tests (common, resource, datasource, provider)
+│   └── integration/                     # Acceptance tests (resource, datasource, provider)
 ├── docs/                                # Generated documentation (do not edit)
 ├── templates/                           # Documentation templates
 ├── examples/                            # HCL examples used in docs
@@ -190,6 +193,18 @@ Documentation is generated from templates in `templates/` and examples in `examp
     ├── test.yml                         # CI: lint + tests
     └── release.yml                      # CD: GoReleaser
 ```
+
+### Claude Code Skills
+
+This project uses custom [Claude Code](https://github.com/DiegoBulhoes/claude) skills (`.claude/`) to assist with development:
+
+| Skill | Description |
+|---|---|
+| `golang` | Go code generation following idiomatic conventions, with Terraform provider-specific patterns |
+| `terraform` | Terraform/OpenTofu IaC code generation following HashiCorp official style guide |
+| `explore` | Repository explorer for codebase analysis, dependency tracing, and gap reporting |
+
+An agent configuration (`terraform-expert`) is also available for advanced Terraform provider development tasks.
 
 ## License
 
