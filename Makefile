@@ -18,7 +18,7 @@ PG_VERSIONS ?= 14 15 16 17
 testacc:
 	@for v in $(PG_VERSIONS); do \
 		echo "=== PostgreSQL $$v ==="; \
-		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 $(GO) test -tags integration -v -timeout 600s -count=1 -parallel 4 ./... || exit 1; \
+		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 TF_ACC_TERRAFORM_PATH=$$(which terraform) $(GO) test -tags integration -v -timeout 600s -count=1 ./... || exit 1; \
 		echo ""; \
 	done
 
