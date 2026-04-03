@@ -1,0 +1,16 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: "Roles & Permissions"
+description: |-
+  Reads information about a PostgreSQL user.
+---
+
+# {{.Type}} ({{.Name}})
+
+Reads information about a PostgreSQL user (a role with LOGIN privilege).
+
+## Example Usage
+
+{{tffile "examples/data-sources/postgresql_user/data-source.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}

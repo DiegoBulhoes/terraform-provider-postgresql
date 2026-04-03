@@ -1,0 +1,28 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: "Roles & Permissions"
+description: |-
+  Manages a PostgreSQL user (a role with LOGIN privilege).
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages a PostgreSQL user. A user is a role with `LOGIN` privilege, allowing it to connect to the database.
+
+Use `postgresql_role` to define permission groups, then assign them to users via the `roles` attribute.
+
+~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a user, the password will not be present in state and will show as changed on the next plan.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_user/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Users can be imported using the user name:
+
+```shell
+terraform import postgresql_user.developer developer
+```

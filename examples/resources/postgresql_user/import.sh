@@ -1,0 +1,1 @@
+terraform import postgresql_user.developer developer
