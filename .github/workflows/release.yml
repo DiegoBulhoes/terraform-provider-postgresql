@@ -28,7 +28,7 @@ jobs:
       - name: Run acceptance tests
         env:
           TF_ACC: "1"
-        run: go test -timeout 600s -parallel 1 ./internal/provider/
+        run: go test -timeout 600s ./...
 
   goreleaser:
     name: GoReleaser
@@ -47,6 +47,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header -o RELEASE_NOTES.md
+
       - name: Import GPG key
         run: |
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
@@ -60,7 +66,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=RELEASE_NOTES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}

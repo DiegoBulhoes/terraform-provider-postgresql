@@ -52,10 +52,4 @@ release:
     - glob: terraform-registry-manifest.json
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
-      - "^chore:"
+  disable: true
