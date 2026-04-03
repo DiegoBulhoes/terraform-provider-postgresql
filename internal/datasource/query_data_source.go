@@ -14,15 +14,15 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*queryDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*queryDataSource)(nil)
+	_ datasource.DataSource              = (*QueryDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*QueryDataSource)(nil)
 )
 
-type queryDataSource struct {
-	db common.DBTX
+type QueryDataSource struct {
+	DB common.DBTX
 }
 
-type queryDataSourceModel struct {
+type QueryDataSourceModel struct {
 	Query            types.String `tfsdk:"query"`
 	Database         types.String `tfsdk:"database"`
 	AllowDestructive types.Bool   `tfsdk:"allow_destructive"`
@@ -30,14 +30,14 @@ type queryDataSourceModel struct {
 }
 
 func NewQueryDataSource() datasource.DataSource {
-	return &queryDataSource{}
+	return &QueryDataSource{}
 }
 
-func (d *queryDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *QueryDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_query"
 }
 
-func (d *queryDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *QueryDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Executes a SQL query and returns the results. By default, only SELECT queries (including CTEs with WITH) are allowed and run inside a read-only transaction for safety. Set `allow_destructive = true` to permit DML/DDL statements.",
 		Attributes: map[string]schema.Attribute{
@@ -62,7 +62,7 @@ func (d *queryDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	}
 }
 
-func (d *queryDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *QueryDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -71,11 +71,11 @@ func (d *queryDataSource) Configure(_ context.Context, req datasource.ConfigureR
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *queryDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state queryDataSourceModel
+func (d *QueryDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state QueryDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -99,7 +99,7 @@ func (d *queryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Execute inside a transaction. Read-only unless destructive is explicitly allowed.
 	txOpts := &sql.TxOptions{ReadOnly: !allowDestructive}
-	tx, err := d.db.BeginTx(ctx, txOpts)
+	tx, err := d.DB.BeginTx(ctx, txOpts)
 	if err != nil {
 		resp.Diagnostics.AddError("Error starting transaction", err.Error())
 		return

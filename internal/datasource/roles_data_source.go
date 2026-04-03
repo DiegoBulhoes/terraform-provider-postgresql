@@ -12,22 +12,22 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*rolesDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*rolesDataSource)(nil)
+	_ datasource.DataSource              = (*RolesDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*RolesDataSource)(nil)
 )
 
-type rolesDataSource struct {
-	db common.DBTX
+type RolesDataSource struct {
+	DB common.DBTX
 }
 
-type rolesDataSourceModel struct {
+type RolesDataSourceModel struct {
 	LikePattern    types.String `tfsdk:"like_pattern"`
 	NotLikePattern types.String `tfsdk:"not_like_pattern"`
 	LoginOnly      types.Bool   `tfsdk:"login_only"`
 	Roles          types.List   `tfsdk:"roles"`
 }
 
-var roleObjectAttrTypes = map[string]attr.Type{
+var RoleObjectAttrTypes = map[string]attr.Type{
 	"name":             types.StringType,
 	"oid":              types.Int64Type,
 	"login":            types.BoolType,
@@ -39,14 +39,14 @@ var roleObjectAttrTypes = map[string]attr.Type{
 }
 
 func NewRolesDataSource() datasource.DataSource {
-	return &rolesDataSource{}
+	return &RolesDataSource{}
 }
 
-func (d *rolesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *RolesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_roles"
 }
 
-func (d *rolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *RolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Lists PostgreSQL roles with optional filtering.",
 		Attributes: map[string]schema.Attribute{
@@ -106,7 +106,7 @@ func (d *rolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	}
 }
 
-func (d *rolesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *RolesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -115,11 +115,11 @@ func (d *rolesDataSource) Configure(_ context.Context, req datasource.ConfigureR
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *rolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state rolesDataSourceModel
+func (d *RolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state RolesDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -162,7 +162,7 @@ func (d *rolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	query += " ORDER BY rolname"
 
-	rows, err := d.db.QueryContext(ctx, query, args...)
+	rows, err := d.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying roles", fmt.Sprintf("Could not query roles: %s", err.Error()))
 		return
@@ -179,7 +179,7 @@ func (d *rolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 			return
 		}
 
-		obj, diags := types.ObjectValue(roleObjectAttrTypes, map[string]attr.Value{
+		obj, diags := types.ObjectValue(RoleObjectAttrTypes, map[string]attr.Value{
 			"name":             types.StringValue(name),
 			"oid":              types.Int64Value(oid),
 			"login":            types.BoolValue(login),
@@ -200,7 +200,7 @@ func (d *rolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	rolesList, diags := types.ListValue(types.ObjectType{AttrTypes: roleObjectAttrTypes}, roleObjects)
+	rolesList, diags := types.ListValue(types.ObjectType{AttrTypes: RoleObjectAttrTypes}, roleObjects)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

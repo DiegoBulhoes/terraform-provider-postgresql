@@ -23,15 +23,15 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*schemaResource)(nil)
-	_ resource.ResourceWithImportState = (*schemaResource)(nil)
+	_ resource.Resource                = (*SchemaResource)(nil)
+	_ resource.ResourceWithImportState = (*SchemaResource)(nil)
 )
 
-type schemaResource struct {
-	db common.DBTX
+type SchemaResource struct {
+	DB common.DBTX
 }
 
-type schemaResourceModel struct {
+type SchemaResourceModel struct {
 	Name        types.String   `tfsdk:"name"`
 	Database    types.String   `tfsdk:"database"`
 	Owner       types.String   `tfsdk:"owner"`
@@ -40,14 +40,14 @@ type schemaResourceModel struct {
 }
 
 func NewSchemaResource() resource.Resource {
-	return &schemaResource{}
+	return &SchemaResource{}
 }
 
-func (r *schemaResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *SchemaResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_schema"
 }
 
-func (r *schemaResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *SchemaResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Version:     0,
 		Description: "Manages a PostgreSQL schema.",
@@ -90,7 +90,7 @@ func (r *schemaResource) Schema(ctx context.Context, _ resource.SchemaRequest, r
 	}
 }
 
-func (r *schemaResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *SchemaResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -99,11 +99,11 @@ func (r *schemaResource) Configure(_ context.Context, req resource.ConfigureRequ
 		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-	r.db = db
+	r.DB = db
 }
 
-func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan schemaResourceModel
+func (r *SchemaResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan SchemaResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -132,7 +132,7 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	tflog.Debug(ctx, "Executing SQL", map[string]interface{}{"sql": sqlStmt})
 
-	_, err := r.db.ExecContext(ctx, sqlStmt)
+	_, err := r.DB.ExecContext(ctx, sqlStmt)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating schema",
@@ -144,7 +144,7 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 	// If database was not specified, read the current database from the connection
 	if plan.Database.IsNull() || plan.Database.IsUnknown() {
 		var currentDB string
-		err := r.db.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDB)
+		err := r.DB.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDB)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error reading current database",
@@ -157,7 +157,7 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	// Read back the owner from the database to populate computed state
 	var owner string
-	err = r.db.QueryRowContext(ctx,
+	err = r.DB.QueryRowContext(ctx,
 		"SELECT schema_owner FROM information_schema.schemata WHERE schema_name = $1",
 		schemaName,
 	).Scan(&owner)
@@ -173,8 +173,8 @@ func (r *schemaResource) Create(ctx context.Context, req resource.CreateRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *schemaResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state schemaResourceModel
+func (r *SchemaResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state SchemaResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -183,7 +183,7 @@ func (r *schemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 	schemaName := state.Name.ValueString()
 
 	var owner string
-	err := r.db.QueryRowContext(ctx,
+	err := r.DB.QueryRowContext(ctx,
 		"SELECT schema_owner FROM information_schema.schemata WHERE schema_name = $1",
 		schemaName,
 	).Scan(&owner)
@@ -207,7 +207,7 @@ func (r *schemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 	// Ensure database is populated
 	if state.Database.IsNull() || state.Database.IsUnknown() {
 		var currentDB string
-		err := r.db.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDB)
+		err := r.DB.QueryRowContext(ctx, "SELECT current_database()").Scan(&currentDB)
 		if err != nil {
 			resp.Diagnostics.AddError("Error reading current database", err.Error())
 			return
@@ -218,9 +218,9 @@ func (r *schemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan schemaResourceModel
-	var state schemaResourceModel
+func (r *SchemaResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan SchemaResourceModel
+	var state SchemaResourceModel
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -248,7 +248,7 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 		)
 		tflog.Debug(ctx, "Executing SQL", map[string]interface{}{"sql": sqlStmt})
 
-		_, err := r.db.ExecContext(ctx, sqlStmt)
+		_, err := r.DB.ExecContext(ctx, sqlStmt)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error renaming schema",
@@ -268,7 +268,7 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 		)
 		tflog.Debug(ctx, "Executing SQL", map[string]interface{}{"sql": sqlStmt})
 
-		_, err := r.db.ExecContext(ctx, sqlStmt)
+		_, err := r.DB.ExecContext(ctx, sqlStmt)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error changing schema owner",
@@ -280,7 +280,7 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	// Read back the current state from the database
 	var owner string
-	err := r.db.QueryRowContext(ctx,
+	err := r.DB.QueryRowContext(ctx,
 		"SELECT schema_owner FROM information_schema.schemata WHERE schema_name = $1",
 		newName,
 	).Scan(&owner)
@@ -296,8 +296,8 @@ func (r *schemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *schemaResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state schemaResourceModel
+func (r *SchemaResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state SchemaResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -316,7 +316,7 @@ func (r *schemaResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	sqlStmt := fmt.Sprintf("DROP SCHEMA %s", pq.QuoteIdentifier(schemaName))
 	tflog.Debug(ctx, "Executing SQL", map[string]interface{}{"sql": sqlStmt})
 
-	_, err := r.db.ExecContext(ctx, sqlStmt)
+	_, err := r.DB.ExecContext(ctx, sqlStmt)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting schema",
@@ -326,7 +326,7 @@ func (r *schemaResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	}
 }
 
-func (r *schemaResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *SchemaResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	idParts := strings.SplitN(req.ID, "/", 2)
 
 	if len(idParts) == 2 {

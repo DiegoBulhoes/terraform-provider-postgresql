@@ -12,20 +12,20 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*extensionsDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*extensionsDataSource)(nil)
+	_ datasource.DataSource              = (*ExtensionsDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*ExtensionsDataSource)(nil)
 )
 
-type extensionsDataSource struct {
-	db common.DBTX
+type ExtensionsDataSource struct {
+	DB common.DBTX
 }
 
-type extensionsDataSourceModel struct {
+type ExtensionsDataSourceModel struct {
 	Database   types.String `tfsdk:"database"`
 	Extensions types.List   `tfsdk:"extensions"`
 }
 
-var extensionObjectAttrTypes = map[string]attr.Type{
+var ExtensionObjectAttrTypes = map[string]attr.Type{
 	"name":        types.StringType,
 	"version":     types.StringType,
 	"schema":      types.StringType,
@@ -33,14 +33,14 @@ var extensionObjectAttrTypes = map[string]attr.Type{
 }
 
 func NewExtensionsDataSource() datasource.DataSource {
-	return &extensionsDataSource{}
+	return &ExtensionsDataSource{}
 }
 
-func (d *extensionsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *ExtensionsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_extensions"
 }
 
-func (d *extensionsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *ExtensionsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Lists installed PostgreSQL extensions.",
 		Attributes: map[string]schema.Attribute{
@@ -76,7 +76,7 @@ func (d *extensionsDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 	}
 }
 
-func (d *extensionsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *ExtensionsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -85,11 +85,11 @@ func (d *extensionsDataSource) Configure(_ context.Context, req datasource.Confi
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *extensionsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state extensionsDataSourceModel
+func (d *ExtensionsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state ExtensionsDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -101,7 +101,7 @@ func (d *extensionsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		LEFT JOIN pg_catalog.pg_available_extensions a ON e.extname = a.name
 		ORDER BY e.extname`
 
-	rows, err := d.db.QueryContext(ctx, query)
+	rows, err := d.DB.QueryContext(ctx, query)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying extensions", fmt.Sprintf("Could not query extensions: %s", err.Error()))
 		return
@@ -116,7 +116,7 @@ func (d *extensionsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 			return
 		}
 
-		obj, diags := types.ObjectValue(extensionObjectAttrTypes, map[string]attr.Value{
+		obj, diags := types.ObjectValue(ExtensionObjectAttrTypes, map[string]attr.Value{
 			"name":        types.StringValue(name),
 			"version":     types.StringValue(version),
 			"schema":      types.StringValue(schemaName),
@@ -133,7 +133,7 @@ func (d *extensionsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		return
 	}
 
-	extList, diags := types.ListValue(types.ObjectType{AttrTypes: extensionObjectAttrTypes}, extObjects)
+	extList, diags := types.ListValue(types.ObjectType{AttrTypes: ExtensionObjectAttrTypes}, extObjects)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

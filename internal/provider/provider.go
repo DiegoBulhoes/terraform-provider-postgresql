@@ -26,7 +26,7 @@ import (
 var _ provider.Provider = (*PostgreSQLProvider)(nil)
 
 type PostgreSQLProvider struct {
-	version string
+	Version string
 }
 
 type PostgreSQLProviderModel struct {
@@ -51,14 +51,14 @@ type PostgreSQLProviderModel struct {
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &PostgreSQLProvider{
-			version: version,
+			Version: version,
 		}
 	}
 }
 
 func (p *PostgreSQLProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "postgresql"
-	resp.Version = p.version
+	resp.Version = p.Version
 }
 
 func (p *PostgreSQLProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
@@ -162,21 +162,21 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 		return
 	}
 
-	host := envOrDefault(config.Host, "PGHOST", "localhost")
-	port := envOrDefaultInt(config.Port, "PGPORT", 5432)
-	username := envOrDefault(config.Username, "PGUSER", "postgres")
-	password := envOrDefault(config.Password, "PGPASSWORD", "")
-	database := envOrDefault(config.Database, "PGDATABASE", "postgres")
-	sslmode := envOrDefault(config.SSLMode, "PGSSLMODE", "prefer")
-	sslcert := envOrDefault(config.SSLCert, "PGSSLCERT", "")
-	sslkey := envOrDefault(config.SSLKey, "PGSSLKEY", "")
-	sslrootcert := envOrDefault(config.SSLRootCert, "PGSSLROOTCERT", "")
-	connectTimeout := envOrDefaultInt(config.ConnectTimeout, "", 30)
-	maxOpenConns := envOrDefaultInt(config.MaxOpenConnections, "", 2)
-	maxIdleConns := envOrDefaultInt(config.MaxIdleConnections, "", 1)
-	connMaxLifetime := envOrDefaultInt(config.ConnMaxLifetime, "", 0)
-	connMaxIdleTime := envOrDefaultInt(config.ConnMaxIdleTime, "", 0)
-	_ = envOrDefaultBool(config.Superuser, "", true)
+	host := EnvOrDefault(config.Host, "PGHOST", "localhost")
+	port := EnvOrDefaultInt(config.Port, "PGPORT", 5432)
+	username := EnvOrDefault(config.Username, "PGUSER", "postgres")
+	password := EnvOrDefault(config.Password, "PGPASSWORD", "")
+	database := EnvOrDefault(config.Database, "PGDATABASE", "postgres")
+	sslmode := EnvOrDefault(config.SSLMode, "PGSSLMODE", "prefer")
+	sslcert := EnvOrDefault(config.SSLCert, "PGSSLCERT", "")
+	sslkey := EnvOrDefault(config.SSLKey, "PGSSLKEY", "")
+	sslrootcert := EnvOrDefault(config.SSLRootCert, "PGSSLROOTCERT", "")
+	connectTimeout := EnvOrDefaultInt(config.ConnectTimeout, "", 30)
+	maxOpenConns := EnvOrDefaultInt(config.MaxOpenConnections, "", 2)
+	maxIdleConns := EnvOrDefaultInt(config.MaxIdleConnections, "", 1)
+	connMaxLifetime := EnvOrDefaultInt(config.ConnMaxLifetime, "", 0)
+	connMaxIdleTime := EnvOrDefaultInt(config.ConnMaxIdleTime, "", 0)
+	_ = EnvOrDefaultBool(config.Superuser, "", true)
 
 	connStr := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=%d",
@@ -225,23 +225,25 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 		return
 	}
 
-	resp.DataSourceData = db
-	resp.ResourceData = db
+	wrapper := common.NewDBWrapper(db)
+	resp.DataSourceData = wrapper
+	resp.ResourceData = wrapper
 }
 
 func (p *PostgreSQLProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		pgresource.NewRoleResource,
+		pgresource.NewUserResource,
 		pgresource.NewDatabaseResource,
 		pgresource.NewSchemaResource,
 		pgresource.NewGrantResource,
-		pgresource.NewDefaultPrivilegesResource,
 	}
 }
 
 func (p *PostgreSQLProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		pgdatasource.NewRoleDataSource,
+		pgdatasource.NewUserDataSource,
 		pgdatasource.NewDatabaseDataSource,
 		pgdatasource.NewSchemasDataSource,
 		pgdatasource.NewQueryDataSource,
@@ -252,7 +254,7 @@ func (p *PostgreSQLProvider) DataSources(_ context.Context) []func() datasource.
 	}
 }
 
-func envOrDefault(val types.String, envVar, defaultVal string) string {
+func EnvOrDefault(val types.String, envVar, defaultVal string) string {
 	if common.IsSet(val) {
 		return val.ValueString()
 	}
@@ -264,7 +266,7 @@ func envOrDefault(val types.String, envVar, defaultVal string) string {
 	return defaultVal
 }
 
-func envOrDefaultInt(val types.Int64, envVar string, defaultVal int) int {
+func EnvOrDefaultInt(val types.Int64, envVar string, defaultVal int) int {
 	if common.IsSet(val) {
 		return int(val.ValueInt64())
 	}
@@ -278,9 +280,9 @@ func envOrDefaultInt(val types.Int64, envVar string, defaultVal int) int {
 	return defaultVal
 }
 
-// envOrDefaultBool returns the Terraform attribute value, or falls back to the
+// EnvOrDefaultBool returns the Terraform attribute value, or falls back to the
 // given environment variable, or finally the default value.
-func envOrDefaultBool(val types.Bool, envVar string, defaultVal bool) bool {
+func EnvOrDefaultBool(val types.Bool, envVar string, defaultVal bool) bool {
 	if common.IsSet(val) {
 		return val.ValueBool()
 	}

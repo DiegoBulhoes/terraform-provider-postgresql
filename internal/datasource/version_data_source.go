@@ -13,15 +13,15 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*versionDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*versionDataSource)(nil)
+	_ datasource.DataSource              = (*VersionDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*VersionDataSource)(nil)
 )
 
-type versionDataSource struct {
-	db common.DBTX
+type VersionDataSource struct {
+	DB common.DBTX
 }
 
-type versionDataSourceModel struct {
+type VersionDataSourceModel struct {
 	Version          types.String `tfsdk:"version"`
 	Major            types.Int64  `tfsdk:"major"`
 	Minor            types.Int64  `tfsdk:"minor"`
@@ -29,14 +29,14 @@ type versionDataSourceModel struct {
 }
 
 func NewVersionDataSource() datasource.DataSource {
-	return &versionDataSource{}
+	return &VersionDataSource{}
 }
 
-func (d *versionDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *VersionDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_version"
 }
 
-func (d *versionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *VersionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Exposes the PostgreSQL server version information.",
 		Attributes: map[string]schema.Attribute{
@@ -60,7 +60,7 @@ func (d *versionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 	}
 }
 
-func (d *versionDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *VersionDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -69,27 +69,27 @@ func (d *versionDataSource) Configure(_ context.Context, req datasource.Configur
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-var versionRegexp = regexp.MustCompile(`(\d+)\.(\d+)`)
+var VersionRegexp = regexp.MustCompile(`(\d+)\.(\d+)`)
 
-func (d *versionDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state versionDataSourceModel
+func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state VersionDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	var versionStr string
-	err := d.db.QueryRowContext(ctx, `SELECT version()`).Scan(&versionStr)
+	err := d.DB.QueryRowContext(ctx, `SELECT version()`).Scan(&versionStr)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying version", fmt.Sprintf("Could not query server version: %s", err.Error()))
 		return
 	}
 	state.Version = types.StringValue(versionStr)
 
-	matches := versionRegexp.FindStringSubmatch(versionStr)
+	matches := VersionRegexp.FindStringSubmatch(versionStr)
 	if len(matches) >= 3 {
 		major, _ := strconv.ParseInt(matches[1], 10, 64)
 		minor, _ := strconv.ParseInt(matches[2], 10, 64)
@@ -101,7 +101,7 @@ func (d *versionDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 
 	var serverVersionNum string
-	err = d.db.QueryRowContext(ctx, `SHOW server_version_num`).Scan(&serverVersionNum)
+	err = d.DB.QueryRowContext(ctx, `SHOW server_version_num`).Scan(&serverVersionNum)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying server_version_num", fmt.Sprintf("Could not query server_version_num: %s", err.Error()))
 		return

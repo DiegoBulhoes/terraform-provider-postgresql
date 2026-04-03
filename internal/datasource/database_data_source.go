@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*databaseDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*databaseDataSource)(nil)
+	_ datasource.DataSource              = (*DatabaseDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*DatabaseDataSource)(nil)
 )
 
-type databaseDataSource struct {
-	db common.DBTX
+type DatabaseDataSource struct {
+	DB common.DBTX
 }
 
-type databaseDataSourceModel struct {
+type DatabaseDataSourceModel struct {
 	Name             types.String `tfsdk:"name"`
 	OID              types.Int64  `tfsdk:"oid"`
 	Owner            types.String `tfsdk:"owner"`
@@ -33,14 +33,14 @@ type databaseDataSourceModel struct {
 }
 
 func NewDatabaseDataSource() datasource.DataSource {
-	return &databaseDataSource{}
+	return &DatabaseDataSource{}
 }
 
-func (d *databaseDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *DatabaseDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_database"
 }
 
-func (d *databaseDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *DatabaseDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Reads information about a PostgreSQL database.",
 		Attributes: map[string]schema.Attribute{
@@ -88,7 +88,7 @@ func (d *databaseDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 	}
 }
 
-func (d *databaseDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *DatabaseDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -97,11 +97,11 @@ func (d *databaseDataSource) Configure(_ context.Context, req datasource.Configu
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *databaseDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state databaseDataSourceModel
+func (d *DatabaseDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state DatabaseDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -114,7 +114,7 @@ func (d *databaseDataSource) Read(ctx context.Context, req datasource.ReadReques
 	var connLimit int64
 	var allowConn, isTemplate bool
 
-	err := d.db.QueryRowContext(ctx,
+	err := d.DB.QueryRowContext(ctx,
 		`SELECT d.oid, r.rolname as owner, pg_encoding_to_char(d.encoding) as encoding,
 		        d.datcollate, d.datctype, t.spcname as tablespace, d.datconnlimit,
 		        d.datallowconn, d.datistemplate

@@ -26,15 +26,15 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*databaseResource)(nil)
-	_ resource.ResourceWithImportState = (*databaseResource)(nil)
+	_ resource.Resource                = (*DatabaseResource)(nil)
+	_ resource.ResourceWithImportState = (*DatabaseResource)(nil)
 )
 
-type databaseResource struct {
-	db common.DBTX
+type DatabaseResource struct {
+	DB common.DBTX
 }
 
-type databaseResourceModel struct {
+type DatabaseResourceModel struct {
 	Name             types.String   `tfsdk:"name"`
 	Owner            types.String   `tfsdk:"owner"`
 	Template         types.String   `tfsdk:"template"`
@@ -50,14 +50,14 @@ type databaseResourceModel struct {
 }
 
 func NewDatabaseResource() resource.Resource {
-	return &databaseResource{}
+	return &DatabaseResource{}
 }
 
-func (r *databaseResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *DatabaseResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_database"
 }
 
-func (r *databaseResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *DatabaseResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Version:     0,
 		Description: "Manages a PostgreSQL database.",
@@ -158,7 +158,7 @@ func (r *databaseResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 	}
 }
 
-func (r *databaseResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *DatabaseResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -167,11 +167,11 @@ func (r *databaseResource) Configure(_ context.Context, req resource.ConfigureRe
 		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-	r.db = db
+	r.DB = db
 }
 
-func (r *databaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan databaseResourceModel
+func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan DatabaseResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -230,7 +230,7 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 		query += " WITH " + strings.Join(opts, " ")
 	}
 
-	_, err := r.db.ExecContext(ctx, query)
+	_, err := r.DB.ExecContext(ctx, query)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating database",
@@ -240,7 +240,7 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// Read back the database to populate computed attributes
-	diags := r.readDatabase(ctx, &plan)
+	diags := r.ReadDatabase(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -249,14 +249,14 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state databaseResourceModel
+func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state DatabaseResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	diags := r.readDatabase(ctx, &state)
+	diags := r.ReadDatabase(ctx, &state)
 	if diags.HasError() {
 		// If the database no longer exists, remove it from state
 		for _, d := range diags {
@@ -272,9 +272,9 @@ func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *databaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan databaseResourceModel
-	var state databaseResourceModel
+func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan DatabaseResourceModel
+	var state DatabaseResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -294,7 +294,7 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	// Update owner
 	if !plan.Owner.Equal(state.Owner) && common.IsSet(plan.Owner) {
 		query := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", dbName, pq.QuoteIdentifier(plan.Owner.ValueString()))
-		_, err := r.db.ExecContext(ctx, query)
+		_, err := r.DB.ExecContext(ctx, query)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error updating database owner",
@@ -307,7 +307,7 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	// Update tablespace
 	if !plan.TablespaceName.Equal(state.TablespaceName) && common.IsSet(plan.TablespaceName) {
 		query := fmt.Sprintf("ALTER DATABASE %s SET TABLESPACE %s", dbName, pq.QuoteIdentifier(plan.TablespaceName.ValueString()))
-		_, err := r.db.ExecContext(ctx, query)
+		_, err := r.DB.ExecContext(ctx, query)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error updating database tablespace",
@@ -331,7 +331,7 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 
 	if len(withOpts) > 0 {
 		query := fmt.Sprintf("ALTER DATABASE %s WITH %s", dbName, strings.Join(withOpts, " "))
-		_, err := r.db.ExecContext(ctx, query)
+		_, err := r.DB.ExecContext(ctx, query)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error updating database",
@@ -342,7 +342,7 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	// Read back the database to populate computed attributes
-	diags := r.readDatabase(ctx, &plan)
+	diags := r.ReadDatabase(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -351,8 +351,8 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state databaseResourceModel
+func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state DatabaseResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -371,7 +371,7 @@ func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	// If the database is a template, we must unset that first
 	if state.IsTemplate.ValueBool() {
 		query := fmt.Sprintf("ALTER DATABASE %s WITH IS_TEMPLATE = false", pq.QuoteIdentifier(dbName))
-		_, err := r.db.ExecContext(ctx, query)
+		_, err := r.DB.ExecContext(ctx, query)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error disabling template on database",
@@ -382,7 +382,7 @@ func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 
 	query := fmt.Sprintf("DROP DATABASE %s", pq.QuoteIdentifier(dbName))
-	_, err := r.db.ExecContext(ctx, query)
+	_, err := r.DB.ExecContext(ctx, query)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting database",
@@ -392,11 +392,11 @@ func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 }
 
-func (r *databaseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *DatabaseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-func (r *databaseResource) readDatabase(ctx context.Context, model *databaseResourceModel) diag.Diagnostics {
+func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	dbName := model.Name.ValueString()
@@ -428,7 +428,7 @@ func (r *databaseResource) readDatabase(ctx context.Context, model *databaseReso
 		WHERE d.datname = $1
 	`
 
-	err := r.db.QueryRowContext(ctx, query, dbName).Scan(
+	err := r.DB.QueryRowContext(ctx, query, dbName).Scan(
 		&oid,
 		&owner,
 		&encoding,

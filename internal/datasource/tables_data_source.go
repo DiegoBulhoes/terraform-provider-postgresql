@@ -12,15 +12,15 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*tablesDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*tablesDataSource)(nil)
+	_ datasource.DataSource              = (*TablesDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*TablesDataSource)(nil)
 )
 
-type tablesDataSource struct {
-	db common.DBTX
+type TablesDataSource struct {
+	DB common.DBTX
 }
 
-type tablesDataSourceModel struct {
+type TablesDataSourceModel struct {
 	Database       types.String `tfsdk:"database"`
 	Schema         types.String `tfsdk:"schema"`
 	LikePattern    types.String `tfsdk:"like_pattern"`
@@ -29,7 +29,7 @@ type tablesDataSourceModel struct {
 	Tables         types.List   `tfsdk:"tables"`
 }
 
-var tableObjectAttrTypes = map[string]attr.Type{
+var TableObjectAttrTypes = map[string]attr.Type{
 	"name":   types.StringType,
 	"schema": types.StringType,
 	"type":   types.StringType,
@@ -37,14 +37,14 @@ var tableObjectAttrTypes = map[string]attr.Type{
 }
 
 func NewTablesDataSource() datasource.DataSource {
-	return &tablesDataSource{}
+	return &TablesDataSource{}
 }
 
-func (d *tablesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *TablesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_tables"
 }
 
-func (d *tablesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *TablesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Lists PostgreSQL tables with optional filtering.",
 		Attributes: map[string]schema.Attribute{
@@ -96,7 +96,7 @@ func (d *tablesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 	}
 }
 
-func (d *tablesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *TablesDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -105,11 +105,11 @@ func (d *tablesDataSource) Configure(_ context.Context, req datasource.Configure
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *tablesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state tablesDataSourceModel
+func (d *TablesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state TablesDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -157,7 +157,7 @@ func (d *tablesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 
 	query += " ORDER BY t.table_schema, t.table_name"
 
-	rows, err := d.db.QueryContext(ctx, query, args...)
+	rows, err := d.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying tables", fmt.Sprintf("Could not query tables: %s", err.Error()))
 		return
@@ -172,7 +172,7 @@ func (d *tablesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			return
 		}
 
-		obj, diags := types.ObjectValue(tableObjectAttrTypes, map[string]attr.Value{
+		obj, diags := types.ObjectValue(TableObjectAttrTypes, map[string]attr.Value{
 			"name":   types.StringValue(name),
 			"schema": types.StringValue(schemaName),
 			"type":   types.StringValue(tableType),
@@ -189,7 +189,7 @@ func (d *tablesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	tablesList, diags := types.ListValue(types.ObjectType{AttrTypes: tableObjectAttrTypes}, tableObjects)
+	tablesList, diags := types.ListValue(types.ObjectType{AttrTypes: TableObjectAttrTypes}, tableObjects)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

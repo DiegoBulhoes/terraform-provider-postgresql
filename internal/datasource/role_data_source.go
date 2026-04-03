@@ -13,15 +13,15 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = (*roleDataSource)(nil)
-	_ datasource.DataSourceWithConfigure = (*roleDataSource)(nil)
+	_ datasource.DataSource              = (*RoleDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*RoleDataSource)(nil)
 )
 
-type roleDataSource struct {
-	db common.DBTX
+type RoleDataSource struct {
+	DB common.DBTX
 }
 
-type roleDataSourceModel struct {
+type RoleDataSourceModel struct {
 	Name            types.String `tfsdk:"name"`
 	OID             types.Int64  `tfsdk:"oid"`
 	Login           types.Bool   `tfsdk:"login"`
@@ -35,14 +35,14 @@ type roleDataSourceModel struct {
 }
 
 func NewRoleDataSource() datasource.DataSource {
-	return &roleDataSource{}
+	return &RoleDataSource{}
 }
 
-func (d *roleDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+func (d *RoleDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_role"
 }
 
-func (d *roleDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *RoleDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Reads information about a PostgreSQL role.",
 		Attributes: map[string]schema.Attribute{
@@ -91,7 +91,7 @@ func (d *roleDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 	}
 }
 
-func (d *roleDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *RoleDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -100,11 +100,11 @@ func (d *roleDataSource) Configure(_ context.Context, req datasource.ConfigureRe
 		resp.Diagnostics.AddError("Unexpected Data Source Configure Type", err.Error())
 		return
 	}
-	d.db = db
+	d.DB = db
 }
 
-func (d *roleDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var state roleDataSourceModel
+func (d *RoleDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var state RoleDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -117,7 +117,7 @@ func (d *roleDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	var connLimit int64
 	var validUntil sql.NullString
 
-	err := d.db.QueryRowContext(ctx,
+	err := d.DB.QueryRowContext(ctx,
 		`SELECT oid, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolconnlimit, rolvaliduntil
 		 FROM pg_catalog.pg_roles WHERE rolname = $1`, name,
 	).Scan(&oid, &login, &superuser, &createDB, &createRole, &replication, &connLimit, &validUntil)
@@ -141,7 +141,7 @@ func (d *roleDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	// Query role memberships
-	rows, err := d.db.QueryContext(ctx,
+	rows, err := d.DB.QueryContext(ctx,
 		`SELECT r.rolname
 		 FROM pg_catalog.pg_auth_members m
 		 JOIN pg_catalog.pg_roles r ON r.oid = m.roleid

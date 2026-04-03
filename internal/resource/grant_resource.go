@@ -25,15 +25,15 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*grantResource)(nil)
-	_ resource.ResourceWithImportState = (*grantResource)(nil)
+	_ resource.Resource                = (*GrantResource)(nil)
+	_ resource.ResourceWithImportState = (*GrantResource)(nil)
 )
 
-type grantResource struct {
-	db common.DBTX
+type GrantResource struct {
+	DB common.DBTX
 }
 
-type grantResourceModel struct {
+type GrantResourceModel struct {
 	ID              types.String   `tfsdk:"id"`
 	Role            types.String   `tfsdk:"role"`
 	Database        types.String   `tfsdk:"database"`
@@ -46,14 +46,14 @@ type grantResourceModel struct {
 }
 
 func NewGrantResource() resource.Resource {
-	return &grantResource{}
+	return &GrantResource{}
 }
 
-func (r *grantResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *GrantResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_grant"
 }
 
-func (r *grantResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *GrantResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Version:     0,
 		Description: "Manages PostgreSQL GRANT privileges on database objects.",
@@ -132,7 +132,7 @@ func (r *grantResource) Schema(ctx context.Context, _ resource.SchemaRequest, re
 	}
 }
 
-func (r *grantResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *GrantResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -141,11 +141,11 @@ func (r *grantResource) Configure(_ context.Context, req resource.ConfigureReque
 		resp.Diagnostics.AddError("Unexpected Resource Configure Type", err.Error())
 		return
 	}
-	r.db = db
+	r.DB = db
 }
 
-func (r *grantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan grantResourceModel
+func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan GrantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -174,11 +174,11 @@ func (r *grantResource) Create(ctx context.Context, req resource.CreateRequest, 
 		grantOptionClause = " WITH GRANT OPTION"
 	}
 
-	statements := buildGrantStatements(privList, objectType, database, schemaName, role, objects, grantOptionClause)
+	statements := BuildGrantStatements(privList, objectType, database, schemaName, role, objects, grantOptionClause)
 
 	for _, stmt := range statements {
 		tflog.Debug(ctx, "Executing GRANT", map[string]interface{}{"sql": stmt})
-		_, err := r.db.ExecContext(ctx, stmt)
+		_, err := r.DB.ExecContext(ctx, stmt)
 		if err != nil {
 			resp.Diagnostics.AddError("Error executing GRANT", fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
 			return
@@ -189,8 +189,8 @@ func (r *grantResource) Create(ctx context.Context, req resource.CreateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *grantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state grantResourceModel
+func (r *GrantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state GrantResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -208,7 +208,7 @@ func (r *grantResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	canDetectDrift := objectType == "database" || objectType == "schema" || len(objects) > 0
 
 	if canDetectDrift {
-		privileges, grantOption, err := r.readPrivileges(ctx, role, objectType, database, schemaName, objects)
+		privileges, grantOption, err := r.ReadPrivileges(ctx, role, objectType, database, schemaName, objects)
 		if err != nil {
 			resp.Diagnostics.AddError("Error reading privileges", err.Error())
 			return
@@ -242,7 +242,7 @@ func (r *grantResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 // readPrivileges queries the PostgreSQL catalog to determine what privileges a role
 // currently has on a given object.
-func (r *grantResource) readPrivileges(ctx context.Context, role, objectType, database, schemaName string, objects []string) ([]string, bool, error) {
+func (r *GrantResource) ReadPrivileges(ctx context.Context, role, objectType, database, schemaName string, objects []string) ([]string, bool, error) {
 	var query string
 	var args []interface{}
 
@@ -334,7 +334,7 @@ func (r *grantResource) readPrivileges(ctx context.Context, role, objectType, da
 		return nil, false, fmt.Errorf("unsupported object type: %s", objectType)
 	}
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -364,9 +364,9 @@ func (r *grantResource) readPrivileges(ctx context.Context, role, objectType, da
 	return privileges, allGrantable, rows.Err()
 }
 
-func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan grantResourceModel
-	var state grantResourceModel
+func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan GrantResourceModel
+	var state GrantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -389,10 +389,10 @@ func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	objects := common.StringListToSlice(ctx, plan.Objects)
 
 	// Revoke old privileges first.
-	revokeStatements := buildRevokeStatements(objectType, database, schemaName, role, objects)
+	revokeStatements := BuildRevokeStatements(objectType, database, schemaName, role, objects)
 	for _, stmt := range revokeStatements {
 		tflog.Debug(ctx, "Executing REVOKE", map[string]interface{}{"sql": stmt})
-		_, err := r.db.ExecContext(ctx, stmt)
+		_, err := r.DB.ExecContext(ctx, stmt)
 		if err != nil {
 			resp.Diagnostics.AddError("Error executing REVOKE", fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
 			return
@@ -408,10 +408,10 @@ func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		grantOptionClause = " WITH GRANT OPTION"
 	}
 
-	grantStatements := buildGrantStatements(privList, objectType, database, schemaName, role, objects, grantOptionClause)
+	grantStatements := BuildGrantStatements(privList, objectType, database, schemaName, role, objects, grantOptionClause)
 	for _, stmt := range grantStatements {
 		tflog.Debug(ctx, "Executing GRANT", map[string]interface{}{"sql": stmt})
-		_, err := r.db.ExecContext(ctx, stmt)
+		_, err := r.DB.ExecContext(ctx, stmt)
 		if err != nil {
 			resp.Diagnostics.AddError("Error executing GRANT", fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
 			return
@@ -422,8 +422,8 @@ func (r *grantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state grantResourceModel
+func (r *GrantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state GrantResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -443,10 +443,10 @@ func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	schemaName := state.Schema.ValueString()
 	objects := common.StringListToSlice(ctx, state.Objects)
 
-	revokeStatements := buildRevokeStatements(objectType, database, schemaName, role, objects)
+	revokeStatements := BuildRevokeStatements(objectType, database, schemaName, role, objects)
 	for _, stmt := range revokeStatements {
 		tflog.Debug(ctx, "Executing REVOKE", map[string]interface{}{"sql": stmt})
-		_, err := r.db.ExecContext(ctx, stmt)
+		_, err := r.DB.ExecContext(ctx, stmt)
 		if err != nil {
 			resp.Diagnostics.AddError("Error executing REVOKE", fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
 			return
@@ -454,7 +454,7 @@ func (r *grantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 }
 
-func (r *grantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *GrantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import format: role/object_type/database/schema
 	// For database-level grants (no schema): role/object_type/database
 	parts := strings.Split(req.ID, "/")
@@ -484,8 +484,8 @@ func (r *grantResource) ImportState(ctx context.Context, req resource.ImportStat
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }
 
-// buildGrantStatements constructs GRANT SQL statements for the given object type.
-func buildGrantStatements(privList, objectType, database, schemaName, role string, objects []string, grantOptionClause string) []string {
+// BuildGrantStatements constructs GRANT SQL statements for the given object type.
+func BuildGrantStatements(privList, objectType, database, schemaName, role string, objects []string, grantOptionClause string) []string {
 	quotedRole := pq.QuoteIdentifier(role)
 	var statements []string
 
@@ -543,8 +543,8 @@ func buildGrantStatements(privList, objectType, database, schemaName, role strin
 	return statements
 }
 
-// buildRevokeStatements constructs REVOKE ALL SQL statements for the given object type.
-func buildRevokeStatements(objectType, database, schemaName, role string, objects []string) []string {
+// BuildRevokeStatements constructs REVOKE ALL SQL statements for the given object type.
+func BuildRevokeStatements(objectType, database, schemaName, role string, objects []string) []string {
 	quotedRole := pq.QuoteIdentifier(role)
 	var statements []string
 
