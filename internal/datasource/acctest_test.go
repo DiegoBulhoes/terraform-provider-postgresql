@@ -1,3 +1,5 @@
+//go:build integration
+
 package datasource_test
 
 import (

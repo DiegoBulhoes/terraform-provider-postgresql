@@ -1,3 +1,5 @@
+//go:build integration
+
 package resource_test
 
 import (

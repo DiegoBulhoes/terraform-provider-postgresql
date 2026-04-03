@@ -1,3 +1,5 @@
+//go:build integration
+
 // Tests for postgresql_database data source.
 package datasource_test
 

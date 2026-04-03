@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package acctest provides shared test infrastructure for acceptance tests
 // across all packages (provider, resource, datasource).
 package acctest

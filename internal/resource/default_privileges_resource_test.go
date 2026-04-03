@@ -1,3 +1,5 @@
+//go:build integration
+
 // Tests for postgresql_default_privileges resource.
 package resource_test
 

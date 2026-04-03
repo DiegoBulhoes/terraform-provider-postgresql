@@ -1,3 +1,5 @@
+//go:build integration
+
 // Tests for postgresql_role resource.
 package resource_test
 

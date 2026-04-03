@@ -1,3 +1,5 @@
+//go:build integration
+
 // Tests for postgresql_database resource.
 package resource_test
 

@@ -1,3 +1,5 @@
+//go:build integration
+
 // Tests for provider configuration validation and full stack integration.
 package provider
 
