@@ -1,6 +1,6 @@
 ---
 page_title: "Data Source postgresql_query - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Utilities"
 description: |-
   Executes a read-only SQL query and returns the results.
 ---

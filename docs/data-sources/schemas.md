@@ -1,6 +1,6 @@
 ---
 page_title: "Data Source postgresql_schemas - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Lists PostgreSQL schemas with optional filtering.
 ---

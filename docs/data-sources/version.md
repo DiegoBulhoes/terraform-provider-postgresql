@@ -1,6 +1,6 @@
 ---
 page_title: "Data Source postgresql_version - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Exposes the PostgreSQL server version information.
 ---

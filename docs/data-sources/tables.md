@@ -1,6 +1,6 @@
 ---
 page_title: "Data Source postgresql_tables - terraform-provider-postgresql"
-subcategory: ""
+subcategory: "Database Objects"
 description: |-
   Lists PostgreSQL tables with optional filtering.
 ---
