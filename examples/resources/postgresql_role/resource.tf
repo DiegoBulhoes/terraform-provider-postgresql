@@ -1,68 +1,67 @@
 # Minimal: only "name" is required
 resource "postgresql_role" "basic" {
-  name = "basic_user"
+  name = "basic_role"
 }
 
-# Role with login and password
-resource "postgresql_role" "app" {
-  name     = "app_user"   # Required
-  login    = true          # Optional, default: false
-  password = "changeme"    # Optional
-}
-
-# Role with privileges
-resource "postgresql_role" "admin" {
-  name             = "db_admin"       # Required
-  login            = true              # Optional
-  password         = "supersecret"     # Optional
-  create_database  = true              # Optional, default: false
-  create_role      = true              # Optional, default: false
-  connection_limit = 10                # Optional, default: -1 (unlimited)
-  valid_until      = "2025-12-31T23:59:59Z" # Optional
-}
-
-# Group role (no login) used to manage permissions
+# Role with inline privileges on all tables in a schema
 resource "postgresql_role" "readonly" {
-  name  = "readonly"
-  login = false
+  name = "readonly"
+
+  privilege {
+    privileges  = ["SELECT"]
+    object_type = "table"
+    schema      = "public"
+  }
 }
 
-# Role inheriting permissions from a group
-resource "postgresql_role" "developer" {
-  name     = "developer"
-  login    = true
-  password = "devpass"
-  roles    = [postgresql_role.readonly.name] # Optional: list of group memberships
+# Role with multiple privilege blocks
+resource "postgresql_role" "readwrite" {
+  name = "readwrite"
+
+  privilege {
+    privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+    object_type = "table"
+    schema      = "public"
+  }
+
+  privilege {
+    privileges  = ["USAGE", "SELECT"]
+    object_type = "sequence"
+    schema      = "public"
+  }
 }
 
-# Replication role for streaming replication
-resource "postgresql_role" "replicator" {
-  name        = "replicator"
-  login       = true
-  password    = "replpass"
-  replication = true # Optional, default: false
+# Role with schema-level privileges
+resource "postgresql_role" "schema_admin" {
+  name            = "schema_admin"
+  create_database = true
+
+  privilege {
+    privileges  = ["CREATE", "USAGE"]
+    object_type = "schema"
+    schema      = "public"
+  }
 }
 
-# Service account with limited connections
-resource "postgresql_role" "service" {
-  name             = "api_service"
-  login            = true
-  password         = "svcpass"
-  connection_limit = 5
+# Role with database-level privileges
+resource "postgresql_role" "db_connect" {
+  name = "db_connect"
+
+  privilege {
+    privileges  = ["CONNECT"]
+    object_type = "database"
+    database    = "myapp"
+  }
 }
 
-# Role inheriting from multiple groups
-resource "postgresql_role" "writers" {
-  name  = "writers"
-  login = false
-}
+# Role with privileges on specific tables
+resource "postgresql_role" "reports" {
+  name = "reports"
 
-resource "postgresql_role" "full_access" {
-  name     = "full_access_user"
-  login    = true
-  password = "fullpass"
-  roles    = [
-    postgresql_role.readonly.name,
-    postgresql_role.writers.name,
-  ]
+  privilege {
+    privileges  = ["SELECT"]
+    object_type = "table"
+    schema      = "public"
+    objects     = ["orders", "products", "customers"]
+  }
 }

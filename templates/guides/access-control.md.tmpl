@@ -1,13 +1,13 @@
 ---
-page_title: "Access Control with Roles, Grants, and Default Privileges"
+page_title: "Access Control with Roles and Grants"
 subcategory: "Guides"
 description: |-
-  A complete guide to managing PostgreSQL access control using roles, grants, and default privileges with Terraform.
+  A complete guide to managing PostgreSQL access control using roles and grants with Terraform.
 ---
 
-# Access Control with Roles, Grants, and Default Privileges
+# Access Control with Roles and Grants
 
-This guide demonstrates a realistic access control setup for a PostgreSQL application database. You will create an owner role, a read-only role, and an application role, then grant appropriate privileges and configure default privileges so future objects inherit the correct permissions.
+This guide demonstrates a realistic access control setup for a PostgreSQL application database. You will create an owner user, a read-only role, and an application user, then grant appropriate privileges.
 
 ## Overview
 
@@ -17,34 +17,32 @@ A common PostgreSQL access pattern uses three types of roles:
 2. **Read-only role** -- Can read all data but cannot modify anything. Used for reporting, analytics, and debugging.
 3. **Application role** -- Can read and write data but cannot alter schema structure. Used by the running application.
 
-## Step 1: Create the Roles
+## Step 1: Create the Users and Roles
+
+In PostgreSQL, `postgresql_user` represents login users and `postgresql_role` represents permission groups (NOLOGIN). Users can be members of roles to inherit their privileges.
 
 ```terraform
-# Owner role: runs migrations, creates tables
-resource "postgresql_role" "owner" {
+# Owner user: runs migrations, creates tables
+resource "postgresql_user" "owner" {
   name            = "app_owner"
-  login           = true
   password        = var.owner_password
   create_database = true
 }
 
-# Read-only group role (no login -- individual users inherit from it)
+# Read-only group role (permission group -- individual users inherit from it)
 resource "postgresql_role" "readonly" {
-  name  = "app_readonly"
-  login = false
+  name = "app_readonly"
 }
 
-# Application role: used by the running service
-resource "postgresql_role" "app" {
+# Application user: used by the running service
+resource "postgresql_user" "app" {
   name     = "app_service"
-  login    = true
   password = var.app_password
 }
 
 # A human user who inherits the readonly role
-resource "postgresql_role" "analyst" {
+resource "postgresql_user" "analyst" {
   name     = "analyst"
-  login    = true
   password = var.analyst_password
   roles    = [postgresql_role.readonly.name]
 }
@@ -55,7 +53,7 @@ resource "postgresql_role" "analyst" {
 ```terraform
 resource "postgresql_database" "app" {
   name     = "myapp"
-  owner    = postgresql_role.owner.name
+  owner    = postgresql_user.owner.name
   template = "template0"
   encoding = "UTF8"
 }
@@ -63,19 +61,19 @@ resource "postgresql_database" "app" {
 resource "postgresql_schema" "public_schema" {
   name     = "public"
   database = postgresql_database.app.name
-  owner    = postgresql_role.owner.name
+  owner    = postgresql_user.owner.name
 }
 
 resource "postgresql_schema" "api" {
   name     = "api"
   database = postgresql_database.app.name
-  owner    = postgresql_role.owner.name
+  owner    = postgresql_user.owner.name
 }
 
 resource "postgresql_schema" "internal" {
   name     = "internal"
   database = postgresql_database.app.name
-  owner    = postgresql_role.owner.name
+  owner    = postgresql_user.owner.name
 }
 ```
 
@@ -92,7 +90,7 @@ resource "postgresql_grant" "readonly_connect" {
 }
 
 resource "postgresql_grant" "app_connect" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   object_type = "database"
   privileges  = ["CONNECT"]
@@ -129,7 +127,7 @@ resource "postgresql_grant" "readonly_usage_internal" {
 
 # Application: USAGE on public and api schemas only
 resource "postgresql_grant" "app_usage_public" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "public"
   object_type = "schema"
@@ -137,7 +135,7 @@ resource "postgresql_grant" "app_usage_public" {
 }
 
 resource "postgresql_grant" "app_usage_api" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "api"
   object_type = "schema"
@@ -177,7 +175,7 @@ resource "postgresql_grant" "readonly_tables_internal" {
 
 # Application: full CRUD on tables in public and api schemas
 resource "postgresql_grant" "app_tables_public" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "public"
   object_type = "table"
@@ -185,7 +183,7 @@ resource "postgresql_grant" "app_tables_public" {
 }
 
 resource "postgresql_grant" "app_tables_api" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "api"
   object_type = "table"
@@ -194,7 +192,7 @@ resource "postgresql_grant" "app_tables_api" {
 
 # Application: sequence usage (needed for serial/identity columns)
 resource "postgresql_grant" "app_sequences_public" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "public"
   object_type = "sequence"
@@ -202,97 +200,11 @@ resource "postgresql_grant" "app_sequences_public" {
 }
 
 resource "postgresql_grant" "app_sequences_api" {
-  role        = postgresql_role.app.name
+  role        = postgresql_user.app.name
   database    = postgresql_database.app.name
   schema      = "api"
   object_type = "sequence"
   privileges  = ["USAGE", "SELECT"]
-}
-```
-
-## Step 6: Set Up Default Privileges
-
-Default privileges ensure that objects created in the future by the owner role automatically grant the correct permissions. Without this, new tables created by `app_owner` would not be accessible to other roles.
-
-```terraform
-# ---- Read-only defaults ----
-
-# Future tables: SELECT
-resource "postgresql_default_privileges" "readonly_tables_public" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.readonly.name
-  database    = postgresql_database.app.name
-  schema      = "public"
-  object_type = "table"
-  privileges  = ["SELECT"]
-}
-
-resource "postgresql_default_privileges" "readonly_tables_api" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.readonly.name
-  database    = postgresql_database.app.name
-  schema      = "api"
-  object_type = "table"
-  privileges  = ["SELECT"]
-}
-
-resource "postgresql_default_privileges" "readonly_tables_internal" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.readonly.name
-  database    = postgresql_database.app.name
-  schema      = "internal"
-  object_type = "table"
-  privileges  = ["SELECT"]
-}
-
-# ---- Application defaults ----
-
-# Future tables: full CRUD
-resource "postgresql_default_privileges" "app_tables_public" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = "public"
-  object_type = "table"
-  privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
-}
-
-resource "postgresql_default_privileges" "app_tables_api" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = "api"
-  object_type = "table"
-  privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
-}
-
-# Future sequences: USAGE and SELECT
-resource "postgresql_default_privileges" "app_sequences_public" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = "public"
-  object_type = "sequence"
-  privileges  = ["USAGE", "SELECT"]
-}
-
-resource "postgresql_default_privileges" "app_sequences_api" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = "api"
-  object_type = "sequence"
-  privileges  = ["USAGE", "SELECT"]
-}
-
-# Future functions: EXECUTE
-resource "postgresql_default_privileges" "app_functions_public" {
-  owner       = postgresql_role.owner.name
-  role        = postgresql_role.app.name
-  database    = postgresql_database.app.name
-  schema      = "public"
-  object_type = "function"
-  privileges  = ["EXECUTE"]
 }
 ```
 
@@ -321,16 +233,13 @@ variable "analyst_password" {
 
 This configuration implements a layered access control model:
 
-| Role | Database | Schema | Tables | Sequences | Functions |
-|------|----------|--------|--------|-----------|-----------|
-| `app_owner` | Owner | Owner | Owner | Owner | Owner |
-| `app_readonly` | CONNECT | USAGE (all) | SELECT (all) | -- | -- |
-| `app_service` | CONNECT | USAGE (public, api) | CRUD (public, api) | USAGE, SELECT | EXECUTE |
-| `analyst` | Inherits from `app_readonly` | Inherits | Inherits | Inherits | Inherits |
-
-Default privileges ensure this model is maintained as new objects are created by the owner role.
+| User / Role | Type | Database | Schema | Tables | Sequences | Functions |
+|-------------|------|----------|--------|--------|-----------|-----------|
+| `app_owner` | User | Owner | Owner | Owner | Owner | Owner |
+| `app_readonly` | Role (group) | CONNECT | USAGE (all) | SELECT (all) | -- | -- |
+| `app_service` | User | CONNECT | USAGE (public, api) | CRUD (public, api) | USAGE, SELECT | -- |
+| `analyst` | User | Inherits from `app_readonly` | Inherits | Inherits | Inherits | Inherits |
 
 ## Next Steps
 
 - [Getting Started Guide](getting-started) -- Basic provider setup.
-- [Importing Resources Guide](importing-resources) -- Import existing grants and privileges into Terraform state.

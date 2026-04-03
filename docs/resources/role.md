@@ -2,85 +2,84 @@
 page_title: "Resource postgresql_role - terraform-provider-postgresql"
 subcategory: "Roles & Permissions"
 description: |-
-  Manages a PostgreSQL role.
+  Manages a PostgreSQL role (permission group).
 ---
 
 # Resource (postgresql_role)
 
-Manages a PostgreSQL role. Roles can be used to represent users or groups and control access to database objects.
+Manages a PostgreSQL role as a permission group. Roles define a set of privileges that can be assigned to users via `postgresql_user`.
 
-~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a role, the password will not be present in state and will show as changed on the next plan.
+~> **Note:** Roles created with this resource always have `NOLOGIN`. Use `postgresql_user` for login users with passwords.
 
 ## Example Usage
 
 ```terraform
 # Minimal: only "name" is required
 resource "postgresql_role" "basic" {
-  name = "basic_user"
+  name = "basic_role"
 }
 
-# Role with login and password
-resource "postgresql_role" "app" {
-  name     = "app_user"   # Required
-  login    = true          # Optional, default: false
-  password = "changeme"    # Optional
-}
-
-# Role with privileges
-resource "postgresql_role" "admin" {
-  name             = "db_admin"       # Required
-  login            = true              # Optional
-  password         = "supersecret"     # Optional
-  create_database  = true              # Optional, default: false
-  create_role      = true              # Optional, default: false
-  connection_limit = 10                # Optional, default: -1 (unlimited)
-  valid_until      = "2025-12-31T23:59:59Z" # Optional
-}
-
-# Group role (no login) used to manage permissions
+# Role with inline privileges on all tables in a schema
 resource "postgresql_role" "readonly" {
-  name  = "readonly"
-  login = false
+  name = "readonly"
+
+  privilege {
+    privileges  = ["SELECT"]
+    object_type = "table"
+    schema      = "public"
+  }
 }
 
-# Role inheriting permissions from a group
-resource "postgresql_role" "developer" {
-  name     = "developer"
-  login    = true
-  password = "devpass"
-  roles    = [postgresql_role.readonly.name] # Optional: list of group memberships
+# Role with multiple privilege blocks
+resource "postgresql_role" "readwrite" {
+  name = "readwrite"
+
+  privilege {
+    privileges  = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+    object_type = "table"
+    schema      = "public"
+  }
+
+  privilege {
+    privileges  = ["USAGE", "SELECT"]
+    object_type = "sequence"
+    schema      = "public"
+  }
 }
 
-# Replication role for streaming replication
-resource "postgresql_role" "replicator" {
-  name        = "replicator"
-  login       = true
-  password    = "replpass"
-  replication = true # Optional, default: false
+# Role with schema-level privileges
+resource "postgresql_role" "schema_admin" {
+  name            = "schema_admin"
+  create_database = true
+
+  privilege {
+    privileges  = ["CREATE", "USAGE"]
+    object_type = "schema"
+    schema      = "public"
+  }
 }
 
-# Service account with limited connections
-resource "postgresql_role" "service" {
-  name             = "api_service"
-  login            = true
-  password         = "svcpass"
-  connection_limit = 5
+# Role with database-level privileges
+resource "postgresql_role" "db_connect" {
+  name = "db_connect"
+
+  privilege {
+    privileges  = ["CONNECT"]
+    object_type = "database"
+    database    = "myapp"
+  }
 }
 
-# Role inheriting from multiple groups
-resource "postgresql_role" "writers" {
-  name  = "writers"
-  login = false
-}
+# Role with privileges on specific tables
+resource "postgresql_role" "reports" {
+  name = "reports"
 
-resource "postgresql_role" "full_access" {
-  name     = "full_access_user"
-  login    = true
-  password = "fullpass"
-  roles    = [
-    postgresql_role.readonly.name,
-    postgresql_role.writers.name,
-  ]
+  privilege {
+    privileges  = ["SELECT"]
+    object_type = "table"
+    schema      = "public"
+    objects     = ["orders", "products", "customers"]
+  }
 }
 ```
 
@@ -96,17 +95,29 @@ resource "postgresql_role" "full_access" {
 - `connection_limit` (Number) Maximum number of concurrent connections the role can make. -1 means no limit. Default: -1.
 - `create_database` (Boolean) Whether the role can create databases. Default: false.
 - `create_role` (Boolean) Whether the role can create other roles. Default: false.
-- `login` (Boolean) Whether the role can log in. Default: false.
-- `password` (String, Sensitive) The password for the role.
+- `privilege` (Block List) Privilege grants for this role. Each block defines a set of privileges on a specific object type. (see [below for nested schema](#nestedblock--privilege))
 - `replication` (Boolean) Whether the role can initiate streaming replication. Default: false.
-- `roles` (List of String) List of roles that this role is a member of.
 - `superuser` (Boolean) Whether the role is a superuser. Default: false.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `valid_until` (String) Timestamp until which the role's password is valid. If omitted, the password never expires. Format: RFC 3339 (e.g. 2025-12-31T23:59:59Z).
 
 ### Read-Only
 
 - `oid` (Number) The OID of the role.
+
+<a id="nestedblock--privilege"></a>
+### Nested Schema for `privilege`
+
+Required:
+
+- `object_type` (String) The object type to grant privileges on: database, schema, table, sequence, or function.
+- `privileges` (Set of String) The set of privileges to grant (e.g. SELECT, INSERT, UPDATE, DELETE, USAGE, CREATE, ALL).
+
+Optional:
+
+- `database` (String) The database for database-level grants.
+- `objects` (List of String) Specific object names. If empty, grants on ALL objects of the given type in the schema.
+- `schema` (String) The schema containing the objects.
+
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`
@@ -122,5 +133,5 @@ Optional:
 Roles can be imported using the role name:
 
 ```shell
-terraform import postgresql_role.app app_user
+terraform import postgresql_role.readonly readonly
 ```

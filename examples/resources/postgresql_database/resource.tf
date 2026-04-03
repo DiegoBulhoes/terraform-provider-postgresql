@@ -4,15 +4,15 @@ resource "postgresql_database" "mydb" {
 }
 
 # Database with dedicated owner
-resource "postgresql_role" "owner" {
+resource "postgresql_user" "owner" {
   name            = "app_owner"
-  login           = true
+  password        = "ownerpass"
   create_database = true
 }
 
 resource "postgresql_database" "configured" {
   name              = "my_app_db"                # Required
-  owner             = postgresql_role.owner.name  # Optional
+  owner             = postgresql_user.owner.name  # Optional
   template          = "template0"                 # Optional, default: template0
   encoding          = "UTF8"                      # Optional, default: UTF8
   lc_collate        = "en_US.UTF-8"              # Optional
@@ -26,7 +26,7 @@ resource "postgresql_database" "configured" {
 # Template database that can be cloned
 resource "postgresql_database" "template" {
   name              = "app_template"
-  owner             = postgresql_role.owner.name
+  owner             = postgresql_user.owner.name
   is_template       = true
   allow_connections = false
 }
@@ -34,13 +34,13 @@ resource "postgresql_database" "template" {
 # Database for testing with restricted connections
 resource "postgresql_database" "test" {
   name             = "test_db"
-  owner            = postgresql_role.owner.name
+  owner            = postgresql_user.owner.name
   connection_limit = 10
 }
 
 # Analytics database
 resource "postgresql_database" "analytics" {
   name     = "analytics"
-  owner    = postgresql_role.owner.name
+  owner    = postgresql_user.owner.name
   encoding = "UTF8"
 }

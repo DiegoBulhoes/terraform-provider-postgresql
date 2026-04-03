@@ -6,7 +6,7 @@ description: |-
 
 # PostgreSQL Provider
 
-The PostgreSQL provider allows you to manage PostgreSQL resources such as roles, databases, schemas, grants, and default privileges.
+The PostgreSQL provider allows you to manage PostgreSQL resources such as roles, users, databases, schemas, and grants.
 
 ## Example Usage
 
@@ -31,7 +31,7 @@ Environment variables are used as fallback when the corresponding attribute is n
 ## Known Limitations
 
 - The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a separate connection. The provider operates on the database configured at the provider level.
-- `postgresql_role` password cannot be read back from PostgreSQL. After import, the password will not be in state.
+- `postgresql_user` password cannot be read back from PostgreSQL. After import, the password will not be in state.
 - `postgresql_grant` on ALL TABLES/SEQUENCES/FUNCTIONS does not track individual objects for drift detection.
 
 ## Compatibility

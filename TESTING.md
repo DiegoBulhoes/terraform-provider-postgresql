@@ -34,7 +34,7 @@ make cover-html
 
 Tests are co-located with source files. Each package has:
 
-- **Unit tests** (`go-sqlmock`) — error paths, no DB needed
+- **Unit tests** (`go.uber.org/mock`) — error paths, no DB needed
 - **Acceptance tests** (`-tags integration`) — full flow with real PostgreSQL
 
 ```

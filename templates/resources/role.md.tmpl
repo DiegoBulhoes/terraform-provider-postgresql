@@ -2,14 +2,14 @@
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
 subcategory: "Roles & Permissions"
 description: |-
-  Manages a PostgreSQL role.
+  Manages a PostgreSQL role (permission group).
 ---
 
 # {{.Type}} ({{.Name}})
 
-Manages a PostgreSQL role. Roles can be used to represent users or groups and control access to database objects.
+Manages a PostgreSQL role as a permission group. Roles define a set of privileges that can be assigned to users via `postgresql_user`.
 
-~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a role, the password will not be present in state and will show as changed on the next plan.
+~> **Note:** Roles created with this resource always have `NOLOGIN`. Use `postgresql_user` for login users with passwords.
 
 ## Example Usage
 
@@ -22,5 +22,5 @@ Manages a PostgreSQL role. Roles can be used to represent users or groups and co
 Roles can be imported using the role name:
 
 ```shell
-terraform import postgresql_role.app app_user
+terraform import postgresql_role.readonly readonly
 ```

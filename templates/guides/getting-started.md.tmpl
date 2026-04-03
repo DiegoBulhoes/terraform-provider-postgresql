@@ -2,7 +2,7 @@
 page_title: "Getting Started with the PostgreSQL Provider"
 subcategory: "Guides"
 description: |-
-  Learn how to configure the Terraform PostgreSQL provider and create your first role and database.
+  Learn how to configure the Terraform PostgreSQL provider and create your first user and database.
 ---
 
 # Getting Started with the PostgreSQL Provider
@@ -97,14 +97,13 @@ provider "postgresql" {
 }
 ```
 
-## Create Your First Role
+## Create Your First User
 
-Roles in PostgreSQL represent users and groups. Create a simple login role:
+Users in PostgreSQL are login roles. Create a simple user:
 
 ```terraform
-resource "postgresql_role" "app_user" {
+resource "postgresql_user" "app_user" {
   name     = "app_user"
-  login    = true
   password = var.app_user_password
 }
 ```
@@ -119,12 +118,12 @@ terraform apply
 
 ## Create Your First Database
 
-Now create a database owned by the role you just created:
+Now create a database owned by the user you just created:
 
 ```terraform
 resource "postgresql_database" "app_db" {
   name  = "my_application"
-  owner = postgresql_role.app_user.name
+  owner = postgresql_user.app_user.name
 }
 ```
 
@@ -182,26 +181,23 @@ provider "postgresql" {
   sslmode  = "prefer"
 }
 
-resource "postgresql_role" "app_user" {
+resource "postgresql_user" "app_user" {
   name     = "app_user"
-  login    = true
   password = "changeme"
 }
 
 resource "postgresql_database" "app_db" {
   name  = "my_application"
-  owner = postgresql_role.app_user.name
+  owner = postgresql_user.app_user.name
 }
 
 resource "postgresql_schema" "app_schema" {
   name     = "app"
   database = postgresql_database.app_db.name
-  owner    = postgresql_role.app_user.name
+  owner    = postgresql_user.app_user.name
 }
 ```
 
 ## Next Steps
 
-- [Access Control Guide](access-control) -- Learn how to set up roles, grants, and default privileges.
-- [Managed PostgreSQL Guide](managed-postgresql) -- Connect to AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
-- [Importing Resources Guide](importing-resources) -- Import existing PostgreSQL infrastructure into Terraform.
+- [Access Control Guide](access-control) -- Learn how to set up roles and grants.

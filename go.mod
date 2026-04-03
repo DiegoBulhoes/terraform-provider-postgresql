@@ -3,7 +3,6 @@ module github.com/DiegoBulhoes/terraform-provider-postgresql
 go 1.26.1
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-timeouts v0.7.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
@@ -12,6 +11,7 @@ require (
 	github.com/hashicorp/terraform-plugin-testing v1.15.0
 	github.com/lib/pq v1.11.2
 	github.com/testcontainers/testcontainers-go v0.41.0
+	go.uber.org/mock v0.6.0
 )
 
 require (
