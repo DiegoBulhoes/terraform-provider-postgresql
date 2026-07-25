@@ -130,14 +130,14 @@ On success you'll see:
 
 | `make` target      | CI step in `.github/workflows/test.yml`               | Modifies files? |
 |--------------------|-------------------------------------------------------|-----------------|
-| `ci-vet`           | `go vet ./...` (`test.yml:28-29`)                     | no |
-| `ci-fmt-check`     | `gofmt -l .` + fail-if-nonempty (`test.yml:31-34`)    | no |
-| `ci-lint`          | `golangci-lint run ./...` (`test.yml:36-37`)          | no |
-| `ci-docs`          | `tfplugindocs validate` (`test.yml:39-40`)            | no |
-| `ci-vuln`          | install + run `govulncheck` (`test.yml:42-46`)        | no |
-| `ci-unit`          | `go test -race -coverpkg ./test/unit/...` (`test.yml:59-60`) | writes `coverage-unit.out` |
+| `ci-vet`           | `go vet ./...` (`test.yml:70-71`)                     | no |
+| `ci-fmt-check`     | `gofmt -l .` + fail-if-nonempty (`test.yml:73-76`)    | no |
+| `ci-lint`          | `golangci-lint run ./...` (`test.yml:78-79`)          | no |
+| `ci-docs`          | `tfplugindocs validate` (`test.yml:81-82`)            | no |
+| `ci-vuln`          | install + run `govulncheck` (`test.yml:84-88`)        | no |
+| `ci-unit`          | `go test -race -coverpkg ./test/unit/...` (`test.yml:101-102`) | writes `coverage-unit.out` |
 | `ci`               | all of the above in sequence                          | no source changes |
-| `ci-acceptance`    | `acceptance` job matrix (`test.yml:62-96`)            | — |
+| `ci-acceptance`    | `acceptance` job matrix (`test.yml:104-138`)          | — |
 
 The lint+format check is **non-modifying** — unlike `make lint`, which
 runs `go fmt` first. If you want CI-style behavior (fail fast on
@@ -146,30 +146,38 @@ format the code use `make fmt`.
 
 ### Selecting PostgreSQL Versions in CI
 
-Both workflows take an optional `pg_versions` input on
-`workflow_dispatch`, so the acceptance matrix is built at runtime instead
-of being hardcoded:
+The acceptance matrix is built at runtime rather than hardcoded. Both
+workflows expose one checkbox per version on `workflow_dispatch`
+(`pg14`…`pg17`, all checked by default), and a small job turns the checked
+boxes into the matrix:
 
-```yaml
-postgres_version: ${{ fromJSON(github.event.inputs.pg_versions || '["14","15","16","17"]') }}
+```
+Run workflow ▾
+  [x] PostgreSQL 14      [x] PostgreSQL 16
+  [x] PostgreSQL 15      [x] PostgreSQL 17
 ```
 
-- **Pull requests** get the full `14 15 16 17` matrix (the input is
-  absent, so the fallback applies).
-- **Manual runs** (Actions → *Tests* / *Release* → *Run workflow*) accept
-  a JSON array — e.g. `["16","17"]` for a quick two-version run. It must
-  be valid JSON, otherwise `fromJSON` fails before the matrix expands.
+- **Pull requests / tag pushes** run all four. The inputs don't exist
+  outside `workflow_dispatch`, so each `PG*` env var arrives empty and the
+  `[ "$PG14" = "false" ] || selected+=(14)` test keeps it — no branching
+  on `github.event_name` needed.
+- **Manual runs** (Actions → *Tests* / *Release* → *Run workflow*) run
+  exactly what's checked. Unchecking everything fails the run with
+  `select at least one PostgreSQL version` instead of silently producing
+  an empty matrix (which GitHub would report as a skipped job).
 
-The `run-name` reflects the choice, so a manual run shows up as
-`Tests - my-branch (PG ["16","17"])` in the Actions list.
+The job emitting the matrix is `resolve-matrix` in `test.yml:30-58`; in
+`release.yml` the same logic lives in the `version` job so the release
+path doesn't pay for an extra runner. Both write the resolved list to the
+run's Step Summary.
 
 This is the CI equivalent of `make ci-acceptance PG_VERSIONS="16 17"`
 locally. Note the two are **not** wired to the same source: the Makefile
-default lives in `Makefile:5` and the workflow default in the `fromJSON`
-fallback above — when you add a PostgreSQL version, update both.
+default lives in `Makefile:5` and the workflow default in the checkbox
+list — when you add a PostgreSQL version, update both.
 
 Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`
-(`test.yml:91`), so a manual run that excludes `17` uploads no coverage.
+(`test.yml:133`), so a manual run that unchecks `17` uploads no coverage.
 
 ### Reproducing a CI Failure Locally
 
@@ -238,7 +246,7 @@ start Docker and retry.
 **`govulncheck` reports stdlib CVEs** — these are fixed in newer Go
 patch releases. The fix is to bump the version in `go.mod:3` (the CI
 runner reads it via `setup-go@v6 with: go-version-file: go.mod`,
-`test.yml:24-26`); your local Go ≥ 1.21 will auto-fetch the required
+`test.yml:66-68`); your local Go ≥ 1.21 will auto-fetch the required
 toolchain.
 
 **`tfplugindocs validate` fails after editing templates** — regenerate:

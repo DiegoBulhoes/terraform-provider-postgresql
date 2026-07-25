@@ -1,20 +1,62 @@
 name: Tests
-run-name: "Tests - ${{ github.head_ref || github.ref_name }}${{ github.event.inputs.pg_versions && format(' (PG {0})', github.event.inputs.pg_versions) || '' }}"
+run-name: "Tests - ${{ github.head_ref || github.ref_name }}"
 
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
-      pg_versions:
-        description: 'PostgreSQL versions for the acceptance matrix (JSON array, e.g. ["16","17"])'
-        required: false
-        default: '["14","15","16","17"]'
+      pg14:
+        description: "PostgreSQL 14"
+        type: boolean
+        default: true
+      pg15:
+        description: "PostgreSQL 15"
+        type: boolean
+        default: true
+      pg16:
+        description: "PostgreSQL 16"
+        type: boolean
+        default: true
+      pg17:
+        description: "PostgreSQL 17"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
+  resolve-matrix:
+    name: Resolve Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      pg_versions: ${{ steps.build.outputs.versions }}
+    steps:
+      - name: Build acceptance matrix
+        id: build
+        env:
+          PG14: ${{ github.event.inputs.pg14 }}
+          PG15: ${{ github.event.inputs.pg15 }}
+          PG16: ${{ github.event.inputs.pg16 }}
+          PG17: ${{ github.event.inputs.pg17 }}
+        run: |
+          set -euo pipefail
+          # On pull_request these inputs are absent (empty), so the "!= false"
+          # test keeps every version in the matrix without branching on the event.
+          selected=()
+          [ "$PG14" = "false" ] || selected+=(14)
+          [ "$PG15" = "false" ] || selected+=(15)
+          [ "$PG16" = "false" ] || selected+=(16)
+          [ "$PG17" = "false" ] || selected+=(17)
+          if [ ${#selected[@]} -eq 0 ]; then
+            echo "::error::select at least one PostgreSQL version"
+            exit 1
+          fi
+          versions=$(printf '%s\n' "${selected[@]}" | jq -R . | jq -sc .)
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "### Acceptance matrix: PostgreSQL ${selected[*]}" >> "$GITHUB_STEP_SUMMARY"
+
   checks:
     name: Checks
     runs-on: ubuntu-latest
@@ -62,11 +104,11 @@ jobs:
   acceptance:
     name: Acceptance Tests (PostgreSQL ${{ matrix.postgres_version }})
     runs-on: ubuntu-latest
-    needs: [unit]
+    needs: [resolve-matrix, unit]
     strategy:
       fail-fast: false
       matrix:
-        postgres_version: ${{ fromJSON(github.event.inputs.pg_versions || '["14","15","16","17"]') }}
+        postgres_version: ${{ fromJSON(needs.resolve-matrix.outputs.pg_versions) }}
     steps:
       - uses: actions/checkout@v6
 
