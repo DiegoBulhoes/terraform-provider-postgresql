@@ -9,9 +9,9 @@ description: |-
 
 Manages a PostgreSQL database.
 
-!> **Warning:** Destroying this resource will execute `DROP DATABASE`, which requires that no active connections exist to the target database. Ensure all connections are closed before destroying.
+!> **Warning:** Destroying this resource runs `DROP DATABASE`. PostgreSQL refuses that while any connection to the database is open, so close them first.
 
-~> **Note:** Changing the `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` attributes forces the resource to be destroyed and recreated.
+~> **Note:** Changing `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` destroys and recreates the database.
 
 ## Example Usage
 
@@ -21,7 +21,7 @@ Manages a PostgreSQL database.
 
 ## Import
 
-Databases can be imported using the database name:
+Import a database by its name:
 
 ```shell
 terraform import postgresql_database.mydb my_application

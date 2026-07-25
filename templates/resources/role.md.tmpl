@@ -7,22 +7,22 @@ description: |-
 
 # {{.Type}} ({{.Name}})
 
-Manages a PostgreSQL role as a permission group. Roles define a set of privileges that can be assigned to users via `postgresql_user`.
+Manages a PostgreSQL role as a permission group. A role holds a set of privileges that you assign to users with `postgresql_user`.
 
-~> **Note:** Roles created with this resource always have `NOLOGIN`. Use `postgresql_user` for login users with passwords.
+~> **Note:** Roles created here always have `NOLOGIN`. For users that log in with a password, use `postgresql_user`.
 
 ## Inline `privilege` Blocks vs. Separate `postgresql_grant` Resources
 
-You can attach privileges to a role two ways:
+You can attach privileges to a role in two ways:
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| Inline `privilege { }` blocks (this resource) | Compact; privileges co-located with the role definition | No per-grant import; no `with_grant_option`; each change triggers a role-level update |
-| Separate `postgresql_grant` resources | Per-grant lifecycle (plan, apply, import, drift detect); supports `with_grant_option` | More verbose; grants live far from the role definition |
+| Inline `privilege { }` blocks (this resource) | Short, and the privileges sit next to the role | No import per grant, no `with_grant_option`, and any change updates the whole role |
+| Separate `postgresql_grant` resources | Each grant has its own lifecycle: plan, apply, import, drift check. Supports `with_grant_option` | Longer, and the grants sit far from the role |
 
-Use inline blocks when the role's privileges are simple and change together. Use `postgresql_grant` when you want fine-grained management (especially for schema-level grants shared by many roles, or when delegation via `with_grant_option` is required).
+Use inline blocks when the privileges are simple and change together. Use `postgresql_grant` when you need finer control, such as schema-level grants shared by many roles, or delegation with `with_grant_option`.
 
-~> **Privilege validation.** Privilege keywords in `privilege.privileges` are validated against the same allowlist used by `postgresql_grant`. See the [grant resource docs](grant) for the complete list.
+~> **Privilege validation.** Keywords in `privilege.privileges` are checked against the same allowlist as `postgresql_grant`. The [grant resource docs](grant) have the full list.
 
 ## Example Usage
 
@@ -32,10 +32,10 @@ Use inline blocks when the role's privileges are simple and change together. Use
 
 ## Import
 
-Roles can be imported using the role name:
+Import a role by its name:
 
 ```shell
 terraform import postgresql_role.readonly readonly
 ```
 
-Inline `privilege` blocks are **not** recovered by import — after importing, run `terraform plan` and expect the provider to re-apply whatever `privilege` blocks are declared in configuration.
+Import does **not** recover inline `privilege` blocks. After an import, run `terraform plan`: the provider re-applies the `privilege` blocks from your config.

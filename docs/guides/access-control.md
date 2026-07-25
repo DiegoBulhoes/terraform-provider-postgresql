@@ -2,12 +2,12 @@
 page_title: "Access Control with Roles and Grants"
 subcategory: "Guides"
 description: |-
-  A complete guide to managing PostgreSQL access control using roles and grants with Terraform.
+  How to manage PostgreSQL access control with roles and grants in Terraform.
 ---
 
 # Access Control with Roles and Grants
 
-This guide demonstrates a realistic access control setup for a PostgreSQL application database. You will create an owner user, a read-only role, and an application user, then grant appropriate privileges — using a DRY `for_each` pattern that scales cleanly to many schemas.
+This guide shows a realistic access control setup for a PostgreSQL application database. You create an owner user, a read-only role, and an application user, then grant the privileges each one needs. The `for_each` pattern used here works for any number of schemas.
 
 ## Overview
 
@@ -17,11 +17,11 @@ A common PostgreSQL access pattern uses three types of roles:
 2. **Read-only role** -- Can read all data but cannot modify anything. Used for reporting, analytics, and debugging.
 3. **Application role** -- Can read and write data but cannot alter schema structure. Used by the running application.
 
-~> **Important gotchas covered below.**
+~> **Watch out for these three things.**
 >
-> - Grants on `ALL TABLES`/`ALL SEQUENCES`/`ALL FUNCTIONS` affect only *existing* objects. Use `ALTER DEFAULT PRIVILEGES` for future objects (see Step 6).
-> - The `PUBLIC` pseudo-role has `CONNECT` on new databases and `CREATE` on the `public` schema by default. Revoke those if you want a closed-by-default posture (see Step 2).
-> - `postgresql_grant` on `ALL` objects (empty `objects` list on `table`/`sequence`/`function`) skips per-object drift detection. Pass `objects = [...]` when drift matters.
+> - Grants on `ALL TABLES`/`ALL SEQUENCES`/`ALL FUNCTIONS` affect only *existing* objects. For future objects, use `ALTER DEFAULT PRIVILEGES` (see Step 6).
+> - By default, the `PUBLIC` pseudo-role has `CONNECT` on new databases and `CREATE` on the `public` schema. Revoke both if you want everything closed by default (see Step 2).
+> - `postgresql_grant` on `ALL` objects (an empty `objects` list on `table`/`sequence`/`function`) does not check drift per object. Pass `objects = [...]` when you need it.
 
 ## Variables
 
@@ -58,7 +58,7 @@ locals {
 }
 ```
 
-~> **Production note.** Passwords end up in Terraform state. Use a state backend with encryption at rest (e.g. S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud) and restrict read access. For human users (like the `analyst` below), prefer IAM/SSO-backed authentication over passwords where the PostgreSQL deployment supports it.
+~> **Production note.** Passwords end up in Terraform state. Use a state backend that encrypts data at rest (S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud) and limit who can read it. For people, like the `analyst` below, use IAM or SSO login instead of a password when your PostgreSQL supports it.
 
 ## Step 1: Create the Users and Roles
 
@@ -91,7 +91,7 @@ resource "postgresql_user" "analyst" {
 }
 ```
 
-~> **Alternative: inline `privilege` blocks on `postgresql_role`.** Instead of managing many `postgresql_grant` resources for a permission group, you can declare grants directly on the role. This trades flexibility for conciseness:
+~> **Alternative: inline `privilege` blocks on `postgresql_role`.** Instead of many `postgresql_grant` resources for one permission group, you can declare the grants on the role itself. This is shorter but less flexible:
 >
 > ```terraform
 > resource "postgresql_role" "readonly" {
@@ -110,7 +110,7 @@ resource "postgresql_user" "analyst" {
 > }
 > ```
 >
-> The separate-`postgresql_grant` approach used below is more verbose but lets each grant be managed, imported, and drift-detected independently.
+> The separate `postgresql_grant` approach used below is longer, but each grant can be managed, imported, and checked for drift on its own.
 
 ## Step 2: Create the Database and Schemas
 
@@ -133,7 +133,7 @@ resource "postgresql_schema" "app" {
 
 ### Revoke default `PUBLIC` privileges (closed-by-default)
 
-By default PostgreSQL grants `CONNECT` on new databases and `CREATE` on the `public` schema to the `PUBLIC` pseudo-role, meaning every role on the server can connect and create objects. For a closed-by-default posture, revoke those before your explicit grants take effect. The `postgresql_query` data source runs arbitrary SQL when `allow_destructive = true`:
+By default, PostgreSQL grants `CONNECT` on new databases and `CREATE` on the `public` schema to the `PUBLIC` pseudo-role. That means every role on the server can connect and create objects. To close this, revoke both before your own grants take effect. The `postgresql_query` data source runs any SQL when `allow_destructive = true`:
 
 ```terraform
 data "postgresql_query" "revoke_public_defaults" {
@@ -147,7 +147,7 @@ data "postgresql_query" "revoke_public_defaults" {
 }
 ```
 
-~> **Run this once, early.** Revoking PUBLIC's default privileges is a one-time hardening step. If the revoke has already been applied, re-running it is a no-op. Schedule it before Steps 3–6 so your explicit CONNECT/USAGE grants aren't shadowed by the permissive defaults.
+~> **Run this once, early.** Revoking PUBLIC's default privileges is a one-time step. Running it again does nothing. Do it before Steps 3-6, so the permissive defaults don't hide the CONNECT and USAGE grants you set yourself.
 
 ## Step 3: Grant Database-Level Privileges
 
@@ -167,7 +167,7 @@ resource "postgresql_grant" "connect" {
 
 ## Step 4: Grant Schema-Level Privileges (USAGE)
 
-Using `for_each` over the schema map keeps the configuration DRY regardless of how many schemas you add later:
+`for_each` over the schema map keeps the config short, no matter how many schemas you add later:
 
 ```terraform
 # Readonly: USAGE on every schema
@@ -230,11 +230,11 @@ resource "postgresql_grant" "app_sequences" {
 }
 ```
 
-~> **Drift detection limitation.** The grants above omit `objects = [...]`, which means they apply to *all* tables/sequences/functions in the schema (`GRANT ... ON ALL TABLES IN SCHEMA`). The provider **does not** check per-object drift for `ALL`-style grants — it can't practically enumerate every object on every refresh. If you need drift detection on specific objects, list them explicitly with `objects = ["orders", "invoices", ...]`.
+~> **Drift detection limit.** The grants above leave out `objects = [...]`, so they apply to *all* tables, sequences, and functions in the schema (`GRANT ... ON ALL TABLES IN SCHEMA`). For these `ALL` grants the provider **does not** check drift per object, because it would have to list every object on every refresh. To get drift detection on specific objects, name them: `objects = ["orders", "invoices", ...]`.
 
 ## Step 6: Grant Privileges on *Future* Objects
 
-Step 5 covers existing tables, but PostgreSQL won't automatically grant those same privileges on tables the owner creates *later*. Use `ALTER DEFAULT PRIVILEGES` so new objects inherit the pattern:
+Step 5 covers tables that already exist. PostgreSQL will not grant the same privileges on tables the owner creates *later*. Use `ALTER DEFAULT PRIVILEGES` so new objects follow the same rules:
 
 ```terraform
 data "postgresql_query" "default_privileges" {
@@ -266,11 +266,11 @@ data "postgresql_query" "default_privileges" {
 }
 ```
 
-`ALTER DEFAULT PRIVILEGES FOR ROLE ${owner}` is scoped to objects created *by that role*. Always name the role explicitly — the default (current user running the `ALTER`) is rarely what you want. See [ALTER DEFAULT PRIVILEGES](https://www.postgresql.org/docs/current/sql-alterdefaultprivileges.html) for the full syntax.
+`ALTER DEFAULT PRIVILEGES FOR ROLE ${owner}` only applies to objects created *by that role*. Always name the role. The default is the user running the `ALTER`, which is rarely what you want. See [ALTER DEFAULT PRIVILEGES](https://www.postgresql.org/docs/current/sql-alterdefaultprivileges.html) for the full syntax.
 
 ## Delegating Grants with `with_grant_option`
 
-If a role needs to grant its privileges to others (useful for a platform team that manages access without being superuser), set `with_grant_option = true`:
+If a role needs to pass its privileges on to others, set `with_grant_option = true`. This is useful for a platform team that manages access without being superuser:
 
 ```terraform
 resource "postgresql_grant" "platform_admin" {
@@ -284,7 +284,7 @@ resource "postgresql_grant" "platform_admin" {
 
 ## Summary
 
-This configuration implements a layered, DRY access control model:
+This setup gives you a layered access control model:
 
 | User / Role | Type | Database | Schemas (USAGE) | Tables | Sequences | Future objects |
 |-------------|------|----------|-----------------|--------|-----------|----------------|
@@ -294,7 +294,7 @@ This configuration implements a layered, DRY access control model:
 | `analyst` | User | inherits from `app_readonly` | inherits | inherits | inherits | inherits |
 | `PUBLIC` | Pseudo-role | revoked (Step 2) | revoked on `public` | -- | -- | -- |
 
-The `for_each` pattern over `local.schemas` means adding a new schema takes a single line in the `locals` block — every grant adjusts automatically.
+With `for_each` over `local.schemas`, adding a schema takes one line in the `locals` block. Every grant follows automatically.
 
 ## Next Steps
 

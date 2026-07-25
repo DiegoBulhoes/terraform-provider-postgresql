@@ -2,18 +2,18 @@
 page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
 subcategory: "Utilities"
 description: |-
-  Executes a read-only SQL query and returns the results.
+  Runs a read-only SQL query and returns the rows.
 ---
 
 # {{.Type}} ({{.Name}})
 
-Executes a read-only SQL query and returns the results. This data source is useful for querying PostgreSQL catalog tables or running custom read-only queries.
+Runs a read-only SQL query and returns the rows. Use it to read PostgreSQL catalog tables, or to run your own read-only queries.
 
-~> **Security:** By default, this data source only allows `SELECT` queries (including CTEs with `WITH`). Queries that attempt DML (`INSERT`, `UPDATE`, `DELETE`) or DDL (`CREATE`, `DROP`, `ALTER`) are **rejected**. All queries run inside a **read-only transaction**, so even if a query bypasses the prefix check, PostgreSQL itself will block any write operation. To allow destructive queries, you must explicitly set `allow_destructive = true`.
+~> **Security:** By default this data source accepts only `SELECT` queries, including CTEs that start with `WITH`. Writes such as `INSERT`, `UPDATE`, and `DELETE`, and schema changes such as `CREATE`, `DROP`, and `ALTER`, are **rejected**. Every query also runs inside a **read-only transaction**, so PostgreSQL blocks any write even if a query gets past that first check. To run destructive queries, you must set `allow_destructive = true`.
 
 ## Result Format
 
-Every row is returned as a `map[string] -> string` under the `rows` attribute. Numeric, timestamp, boolean, and `NULL` columns are all rendered via PostgreSQL's default text representation; parse them in Terraform expressions (`tonumber`, `toset`, etc.) as needed.
+Each row comes back as a map of string to string under the `rows` attribute. Numbers, timestamps, booleans, and `NULL` all use PostgreSQL's default text form, so convert them in Terraform when you need to, with `tonumber`, `toset`, and so on.
 
 ```terraform
 # Access a single column:
@@ -54,7 +54,7 @@ data "postgresql_query" "revoke_public" {
 }
 ```
 
-~> **`allow_destructive = true` runs in a writable transaction.** Any statement that would fail outside a transaction (e.g. `CREATE DATABASE`, `VACUUM`) will also fail here. For those, connect outside Terraform.
+~> **`allow_destructive = true` runs in a writable transaction.** Statements that cannot run inside a transaction, such as `CREATE DATABASE` and `VACUUM`, fail here too. Run those outside Terraform.
 
 ## Example Usage
 

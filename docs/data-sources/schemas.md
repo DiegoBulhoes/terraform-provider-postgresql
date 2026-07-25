@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_schemas - terraform-provider-postgresql"
 subcategory: "Database Objects"
 description: |-
-  Lists PostgreSQL schemas with optional filtering.
+  Lists PostgreSQL schemas, with optional filters.
 ---
 
 # Data Source (postgresql_schemas)
 
-Lists PostgreSQL schemas with optional filtering by name patterns.
+Lists PostgreSQL schemas. You can filter by name pattern.
 
 ## Example Usage
 

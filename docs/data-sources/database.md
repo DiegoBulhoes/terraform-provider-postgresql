@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_database - terraform-provider-postgresql"
 subcategory: "Database Objects"
 description: |-
-  Reads information about a PostgreSQL database.
+  Reads a PostgreSQL database.
 ---
 
 # Data Source (postgresql_database)
 
-Reads information about an existing PostgreSQL database.
+Reads a PostgreSQL database that already exists.
 
 ## Example Usage
 

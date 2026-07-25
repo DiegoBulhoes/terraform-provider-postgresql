@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_roles - terraform-provider-postgresql"
 subcategory: "Roles & Permissions"
 description: |-
-  Lists PostgreSQL roles with optional filtering.
+  Lists PostgreSQL roles, with optional filters.
 ---
 
 # Data Source (postgresql_roles)
 
-Lists PostgreSQL roles with optional filtering by name pattern and login privilege.
+Lists PostgreSQL roles. You can filter by name pattern and by login privilege.
 
 ## Example Usage
 

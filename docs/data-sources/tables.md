@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_tables - terraform-provider-postgresql"
 subcategory: "Database Objects"
 description: |-
-  Lists PostgreSQL tables with optional filtering.
+  Lists PostgreSQL tables, with optional filters.
 ---
 
 # Data Source (postgresql_tables)
 
-Lists PostgreSQL tables with optional filtering by schema, name pattern, and table type.
+Lists PostgreSQL tables. You can filter by schema, name pattern, and table type.
 
 ## Example Usage
 

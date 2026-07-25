@@ -7,26 +7,26 @@ description: |-
 
 # Resource (postgresql_user)
 
-Manages a PostgreSQL user. A user is a role with `LOGIN` privilege, allowing it to connect to the database.
+Manages a PostgreSQL user. A user is a role with the `LOGIN` privilege, so it can connect to the database.
 
-Use `postgresql_role` to define permission groups, then assign them to users via the `roles` attribute.
+Define permission groups with `postgresql_role`, then assign them here through the `roles` attribute.
 
-~> **Password handling.** The `password` attribute is `Sensitive` and is stored in Terraform state. Use a state backend with encryption at rest (e.g. S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud) and restrict read access. The password **cannot be read back from PostgreSQL** — after importing a user, the password will not be present in state and will show as changed on the next plan.
+~> **Password handling.** The `password` attribute is marked sensitive, but it still goes into Terraform state. Use a state backend that encrypts data at rest, such as S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud, and limit who can read it. PostgreSQL **never returns the password**, so after an import it is missing from state and the next plan shows it as changed.
 
 ## `valid_until` Format
 
-The `valid_until` attribute sets a password expiration timestamp. Accepted formats (validated at plan time):
+The `valid_until` attribute sets when the password expires. These formats are accepted, and checked at plan time:
 
 - RFC 3339 with `T` separator: `"2025-12-31T23:59:59Z"`
 - RFC 3339 with timezone offset: `"2025-12-31T23:59:59-03:00"`
 - SQL timestamp with space separator: `"2025-12-31 23:59:59"`
-- Unset / `null` — password never expires (PostgreSQL `infinity`)
+- Unset or `null`: the password never expires (PostgreSQL `infinity`)
 
-The value is sent to PostgreSQL via `VALID UNTIL <quoted>` and interpreted by the server's timestamp parser. Mismatched formats will surface as a server error during apply.
+The value goes to PostgreSQL as `VALID UNTIL <quoted>` and the server parses it. A format the server rejects shows up as an error during apply.
 
 ## Role Memberships
 
-The `roles` attribute grants the user membership in each listed role. On update, the provider computes a diff and issues the minimum `GRANT ... TO` / `REVOKE ... FROM` statements; duplicates are deduplicated. Changing the list does **not** drop and recreate the user.
+The `roles` attribute makes the user a member of every role listed. On update, the provider compares old and new, then runs only the `GRANT ... TO` and `REVOKE ... FROM` statements it needs. Duplicates are dropped. Changing the list does **not** recreate the user.
 
 ## Example Usage
 
@@ -133,10 +133,10 @@ Optional:
 
 ## Import
 
-Users can be imported using the user name:
+Import a user by its name:
 
 ```shell
 terraform import postgresql_user.developer developer
 ```
 
-After import, the `password` field will be empty in state. Re-declare it in configuration so the next `terraform apply` sets it on the server.
+After an import, `password` is empty in state. Declare it again in your config so the next `terraform apply` sets it on the server.

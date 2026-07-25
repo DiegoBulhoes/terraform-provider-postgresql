@@ -9,15 +9,15 @@ description: |-
 
 Manages a PostgreSQL schema.
 
-~> **Note:** The `database` attribute does not open a separate connection to the specified database. The provider always operates on the database configured at the provider level. To manage schemas in a different database, configure a separate provider instance.
+~> **Note:** The `database` attribute does not open a second connection. The provider always works on the database set in the provider block. To manage schemas in another database, configure a second provider instance.
 
 ## Behavior Details
 
-- **Rename.** Changing `name` issues `ALTER SCHEMA ... RENAME TO ...` and preserves schema contents (tables, views, functions).
-- **Owner change.** Changing `owner` issues `ALTER SCHEMA ... OWNER TO ...`; the connected user must either own the schema or be a superuser, and must be a member of the new owner role.
-- **`if_not_exists = true`.** Adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. Useful for provisioning into databases shared with other automation; the provider will still manage the schema's state on subsequent applies (owner changes, renames, etc.) but will not fail if someone else created it first.
-- **Drop behavior.** Delete issues a plain `DROP SCHEMA` (not `CASCADE`). If the schema contains objects (tables, views, etc.), the drop will fail — drop the contents first or manage them as Terraform resources so they're destroyed in the right order.
-- **Drift detection.** On refresh, the provider re-reads `schema_owner` from `information_schema.schemata`. If the schema no longer exists, it's silently removed from state.
+- **Rename.** Changing `name` runs `ALTER SCHEMA ... RENAME TO ...` and keeps the schema contents: tables, views, and functions.
+- **Owner change.** Changing `owner` runs `ALTER SCHEMA ... OWNER TO ...`. The connected user must own the schema or be a superuser, and must belong to the new owner role.
+- **`if_not_exists = true`.** Adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. This helps when other automation shares the database: later applies still manage the schema, with owner changes and renames, but the first apply does not fail if someone else created it.
+- **Drop behavior.** Delete runs a plain `DROP SCHEMA`, never `CASCADE`. If the schema still holds objects, the drop fails. Remove the contents first, or manage them as Terraform resources so they are destroyed in the right order.
+- **Drift detection.** On refresh, the provider reads `schema_owner` again from `information_schema.schemata`. If the schema is gone, it is removed from state.
 
 ## Example Usage
 
@@ -27,7 +27,7 @@ Manages a PostgreSQL schema.
 
 ## Import
 
-Schemas can be imported using the schema name or `database/schema_name` format:
+Import a schema by its name, or as `database/schema_name`:
 
 ```shell
 terraform import postgresql_schema.app app_schema

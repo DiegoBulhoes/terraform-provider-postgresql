@@ -7,7 +7,7 @@ description: |-
 
 # Data Source (postgresql_user)
 
-Reads information about a PostgreSQL user (a role with LOGIN privilege).
+Reads a PostgreSQL user, which is a role with the LOGIN privilege.
 
 ## Example Usage
 

@@ -11,7 +11,7 @@ Manages PostgreSQL GRANT privileges on database objects such as databases, schem
 
 ## Valid Privileges
 
-Privilege names are validated against an allowlist before any SQL is generated. The following keywords are accepted (case-insensitive; normalized to upper case):
+Privilege names are checked against an allowlist before any SQL is built. These keywords are accepted. Case does not matter, and they are upper-cased for you:
 
 | Category | Keywords |
 |----------|----------|
@@ -22,17 +22,17 @@ Privilege names are validated against an allowlist before any SQL is generated. 
 | Maintenance | `MAINTAIN` |
 | Configuration | `SET`, `ALTER SYSTEM` |
 
-Anything else — including typos like `SELCT` or injection attempts like `"SELECT; DROP"` — is rejected with an `Invalid privileges` diagnostic at plan/apply time.
+Anything else is rejected with an `Invalid privileges` error at plan or apply time. That covers typos like `SELCT` and injection attempts like `"SELECT; DROP"`.
 
 ## Drift Detection
 
-Drift detection (comparing Terraform state against the actual grants in PostgreSQL) is performed for:
+The provider compares Terraform state against the real grants in PostgreSQL for:
 
 - `object_type = "database"` — always
 - `object_type = "schema"` — always
 - `object_type = "table"`, `"sequence"`, `"function"` — **only when `objects = [...]` is specified**
 
-~> **Grants on `ALL` objects skip drift detection.** When `object_type` is `table`, `sequence`, or `function` and `objects` is empty or unset, the provider emits `GRANT ... ON ALL ... IN SCHEMA` and does **not** verify per-object privileges on refresh. New objects created outside Terraform will not be seen as missing. If you need drift detection on specific objects, list them explicitly via `objects = ["foo", "bar"]`.
+~> **Grants on `ALL` objects skip drift detection.** When `object_type` is `table`, `sequence`, or `function` and `objects` is empty or unset, the provider runs `GRANT ... ON ALL ... IN SCHEMA` and does **not** check privileges per object on refresh. Objects created outside Terraform will not show up as missing. To get drift detection, name the objects: `objects = ["foo", "bar"]`.
 
 ## Example Usage
 
@@ -135,7 +135,7 @@ resource "postgresql_grant" "full_sequences" {
 
 ### Granting with Delegation (`with_grant_option`)
 
-Set `with_grant_option = true` to allow the grantee to re-grant the same privileges to others — useful for platform-team roles that manage access without being superuser:
+Set `with_grant_option = true` so the grantee can pass the same privileges on to others. This helps platform-team roles that manage access without being superuser:
 
 ```terraform
 resource "postgresql_grant" "platform_admin" {
@@ -181,7 +181,7 @@ Optional:
 
 ## Import
 
-Grants can be imported using the format `role/object_type/database/schema` (or `role/object_type/database` for database-level grants):
+Import a grant as `role/object_type/database/schema`, or as `role/object_type/database` for database-level grants:
 
 ```shell
 # Database-level grant: role/object_type/database (3 parts, no schema)

@@ -7,7 +7,7 @@ description: |-
 
 # Data Source (postgresql_extensions)
 
-Lists installed PostgreSQL extensions with their version, schema, and description.
+Lists the installed PostgreSQL extensions with their version, schema, and description.
 
 ## Example Usage
 

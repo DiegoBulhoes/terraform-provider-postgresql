@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_role - terraform-provider-postgresql"
 subcategory: "Roles & Permissions"
 description: |-
-  Reads information about a PostgreSQL role.
+  Reads a PostgreSQL role.
 ---
 
 # Data Source (postgresql_role)
 
-Reads information about an existing PostgreSQL role.
+Reads a PostgreSQL role that already exists.
 
 ## Example Usage
 

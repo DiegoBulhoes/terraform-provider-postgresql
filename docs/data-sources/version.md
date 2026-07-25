@@ -2,12 +2,12 @@
 page_title: "Data Source postgresql_version - terraform-provider-postgresql"
 subcategory: "Database Objects"
 description: |-
-  Exposes the PostgreSQL server version information.
+  Reads the PostgreSQL server version.
 ---
 
 # Data Source (postgresql_version)
 
-Exposes the PostgreSQL server version information including major/minor version and numeric server version.
+Reads the PostgreSQL server version: the major and minor numbers, and the numeric server version.
 
 ## Example Usage
 

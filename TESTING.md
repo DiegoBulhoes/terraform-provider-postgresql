@@ -1,7 +1,7 @@
 # Testing
 
-How to run the provider test suite locally, what each Make target does, and
-how to reproduce the CI pipeline before pushing.
+How to run the test suite locally, what each Make target does, and how to
+reproduce the CI pipeline before you push.
 
 ## Table of Contents
 
@@ -20,24 +20,23 @@ how to reproduce the CI pipeline before pushing.
 
 ## Prerequisites
 
-- **Go** ≥ 1.26.5 (the toolchain pinned in `go.mod` —
-  `GOTOOLCHAIN=auto`, the default since Go 1.21, will auto-fetch it if your
-  system has an older version).
-- **Docker** (acceptance tests spin up a PostgreSQL container via
+- **Go** ≥ 1.26.5, the toolchain pinned in `go.mod`. If your system has an
+  older version, `GOTOOLCHAIN=auto`, the default since Go 1.21, fetches the
+  right one.
+- **Docker** (acceptance tests start a PostgreSQL container with
   [testcontainers-go](https://github.com/testcontainers/testcontainers-go)).
-- **Terraform** ≥ 1.0 on `$PATH` (acceptance tests shell out via
-  `TF_ACC_TERRAFORM_PATH=$(which terraform)`, set automatically by the
-  Makefile).
+- **Terraform** ≥ 1.0 on `$PATH`. Acceptance tests call it through
+  `TF_ACC_TERRAFORM_PATH=$(which terraform)`, which the Makefile sets for you.
 
-All Go tooling (`golangci-lint`, `goimports`, `tfplugindocs`, `govulncheck`)
-is declared in `go.mod` and resolved via `go tool` / the Make targets —
-nothing to install manually. `make ci-vuln` will install `govulncheck` into
-`$GOBIN` on first use if it isn't already present.
+The Go tools (`golangci-lint`, `goimports`, `tfplugindocs`, `govulncheck`)
+are declared in `go.mod` and resolved by `go tool` and the Make targets, so
+there is nothing to install by hand. On first use, `make ci-vuln` installs
+`govulncheck` into `$GOBIN` if it is missing.
 
 ## Test Layout
 
-Tests live under `test/` as external test packages (`package xxx_test`)
-so they can only touch the exported API of `internal/`:
+Tests live under `test/` as external test packages (`package xxx_test`), so
+they can only reach the exported API of `internal/`:
 
 ```
 test/
@@ -54,10 +53,10 @@ test/
     └── resource/
 ```
 
-Unit tests use `go.uber.org/mock` (GoMock) for the DB surface. Acceptance
-tests use real PostgreSQL via testcontainers and are compiled only with
-`-tags integration` — this keeps unit-test builds lean and keeps
-`govulncheck` clear of test-only dependencies.
+Unit tests mock the database with `go.uber.org/mock` (GoMock). Acceptance
+tests run against a real PostgreSQL through testcontainers and only compile
+with `-tags integration`. That keeps unit-test builds small and keeps
+`govulncheck` away from test-only dependencies.
 
 Mock regeneration (rarely needed):
 
@@ -103,14 +102,15 @@ and stops at the first failing version via `|| exit 1`.
 make all   # tidy → lint → security → test → build → docs
 ```
 
-Note: `make test` runs both unit **and** the full
-acceptance matrix — it requires Docker + Terraform. If you just want the
-fast feedback loop, prefer `make ci` (unit-only) or `make ci-unit`.
+Note: `make test` runs the unit tests **and** the full acceptance matrix, so
+it needs Docker and Terraform. For a fast loop, use `make ci` or
+`make ci-unit`, which run unit tests only.
 
 ## CI Parity
 
-`make ci` mirrors the `.github/workflows/test.yml` `checks` and `unit`
-jobs. It runs in order and fails on the first problem, just like CI:
+`make ci` mirrors the `checks` and `unit` jobs in
+`.github/workflows/test.yml`. It runs them in order and stops at the first
+problem, like CI does:
 
 ```bash
 make ci
@@ -136,17 +136,16 @@ On success you'll see:
 | `ci`            | all of the above in sequence                   | no source changes |
 | `ci-acceptance` | `acceptance` job matrix                        | — |
 
-The lint+format check is **non-modifying** — unlike `make lint`, which
-runs `go fmt` first. If you want CI-style behavior (fail fast on
-unformatted code) use `make ci-fmt-check`. If you want to actually
-format the code use `make fmt`.
+The lint and format checks **change nothing**, unlike `make lint`, which
+runs `go fmt` first. Use `make ci-fmt-check` to fail on unformatted code the
+way CI does. Use `make fmt` to actually format it.
 
 ### Selecting PostgreSQL Versions in CI
 
-The acceptance matrix is built at runtime rather than hardcoded. Both
-workflows expose one checkbox per version on `workflow_dispatch`
-(`pg14`…`pg17`, all checked by default), and a small job turns the checked
-boxes into the matrix:
+The acceptance matrix is built at run time, not hardcoded. Both workflows
+show one checkbox per version on `workflow_dispatch` (`pg14` to `pg17`, all
+checked by default), and a small job turns the checked boxes into the
+matrix:
 
 ```
 Run workflow ▾
@@ -154,32 +153,31 @@ Run workflow ▾
   [x] PostgreSQL 15      [x] PostgreSQL 17
 ```
 
-- **Pull requests / tag pushes** run all four. The inputs don't exist
-  outside `workflow_dispatch`, so each `PG*` env var arrives empty and the
-  `[ "$PG14" = "false" ] || selected+=(14)` test keeps it — no branching
-  on `github.event_name` needed.
-- **Manual runs** (Actions → *Tests* / *Release* → *Run workflow*) run
-  exactly what's checked. Unchecking everything fails the run with
-  `select at least one PostgreSQL version` instead of silently producing
-  an empty matrix (which GitHub would report as a skipped job).
+- **Pull requests and tag pushes** run all four. The inputs only exist for
+  `workflow_dispatch`, so every `PG*` variable arrives empty and the
+  `[ "$PG14" = "false" ] || selected+=(14)` test keeps it. No check on
+  `github.event_name` is needed.
+- **Manual runs** (Actions → *Tests* or *Release* → *Run workflow*) run
+  exactly what you check. Unchecking everything fails the run with
+  `select at least one PostgreSQL version`. Without that guard, the empty
+  matrix would show up as a skipped job, which looks like a pass.
 
 The job emitting the matrix is `resolve-matrix` in `test.yml`; in
 `release.yml` the same logic lives in the `version` job so the release
 path doesn't pay for an extra runner. Both write the resolved list to the
 run's Step Summary.
 
-This is the CI equivalent of `make ci-acceptance PG_VERSIONS="16 17"`
-locally. Note the two are **not** wired to the same source: the Makefile
-default lives in `PG_VERSIONS` and the workflow default in the checkbox
-list — when you add a PostgreSQL version, update both.
+This is the CI version of `make ci-acceptance PG_VERSIONS="16 17"`. The two
+defaults are **not** connected: one lives in `PG_VERSIONS` in the Makefile,
+the other in the checkbox list. When you add a PostgreSQL version, update
+both.
 
 Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`,
 so a manual run that unchecks `17` uploads no coverage.
 
 ### Reproducing a CI Failure Locally
 
-When CI fails, run the specific target that corresponds to the failing
-step:
+When CI fails, run the target that matches the failing step:
 
 ```bash
 # CI said: "gofmt -l . returned files"
@@ -226,24 +224,22 @@ they compile only when `-tags integration` is passed. Each test calls into
 3. Execute `terraform plan` / `apply` / `import` / `destroy` steps defined
    by the test via `resource.TestStep`.
 
-Because the container is shared between test steps within a single test,
-keep `-parallel 1` (the default) unless you know what you're doing —
-otherwise you can exhaust `max_connections` quickly.
+All steps of a single test share one container, so keep `-parallel 1`, the
+default. Higher values can use up `max_connections` fast.
 
 ## Troubleshooting
 
-**`pq: sorry, too many clients already`** — add `-parallel 1` or
-reduce the number of concurrent `resource.TestStep`s in your test. The
-container starts with `max_connections=500`, but each step opens its
-own pool.
+**`pq: sorry, too many clients already`** — add `-parallel 1`, or run fewer
+`resource.TestStep`s at once. The container starts with
+`max_connections=500`, but every step opens its own pool.
 
 **`Error: Cannot connect to the Docker daemon`** — run `docker info`;
 start Docker and retry.
 
-**`govulncheck` reports stdlib CVEs** — these are fixed in newer Go
-patch releases. The fix is to bump the version in `go.mod` (the CI
-runner reads it via `setup-go@v6 with: go-version-file: go.mod`); your
-local Go ≥ 1.21 will auto-fetch the required toolchain.
+**`govulncheck` reports stdlib CVEs** — newer Go patch releases fix these.
+Raise the version in `go.mod`; the CI runner reads it through `setup-go@v6
+with: go-version-file: go.mod`, and local Go ≥ 1.21 fetches the toolchain
+for you.
 
 **`tfplugindocs validate` fails after editing templates** — regenerate:
 `make docs`, then commit the regenerated `docs/`.
@@ -252,11 +248,9 @@ next `make docs` run (see `CLAUDE.md`).
 
 **`tfplugindocs` fails with `openpgp: key expired`** — the full message is
 `unable to download Terraform binary: unable to verify checksums
-signature`. `tfplugindocs` needs Terraform to export the provider schema;
-when no binary is on `PATH` it downloads one through `hc-install`, whose
-PGP verification fails against HashiCorp's expired signing key. The fix is
-to provide the binary instead of letting it download one — CI does this
-with `hashicorp/setup-terraform@v4` right before the validate step.
-Locally this never reproduces as long as `terraform`
-is on your `PATH`, which is also why `make ci-docs` can pass while CI
-fails.
+signature`. `tfplugindocs` needs Terraform to export the provider schema.
+With no binary on `PATH`, it downloads one through `hc-install`, and that
+download fails PGP checks against HashiCorp's expired signing key. Give it
+a binary instead: CI runs `hashicorp/setup-terraform@v4` right before the
+validate step. This never happens locally while `terraform` is on your
+`PATH`, which is why `make ci-docs` can pass while CI fails.

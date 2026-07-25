@@ -1,12 +1,12 @@
 ---
 page_title: "PostgreSQL Provider"
 description: |-
-  Terraform provider for managing PostgreSQL resources such as roles, databases, schemas, and privileges.
+  Terraform provider that manages PostgreSQL roles, databases, schemas, and privileges.
 ---
 
 # PostgreSQL Provider
 
-The PostgreSQL provider allows you to manage PostgreSQL resources such as roles, users, databases, schemas, and grants.
+The PostgreSQL provider manages roles, users, databases, schemas, and grants.
 
 ## Example Usage
 
@@ -86,7 +86,7 @@ variable "db_password" {
 
 ## Authentication
 
-The provider supports configuration via attributes or environment variables:
+You can configure the provider with attributes or with environment variables:
 
 | Attribute              | Environment Variable | Default     |
 |------------------------|----------------------|-------------|
@@ -106,17 +106,17 @@ The provider supports configuration via attributes or environment variables:
 | `conn_max_idle_time`   | —                    | `0` (no limit) |
 | `superuser`            | —                    | `true`      |
 
-Environment variables are used as fallback when the corresponding attribute is not set.
+The provider falls back to the environment variable when the attribute is not set.
 
-~> **Special characters in credentials.** Passwords, paths, and SSL parameters containing spaces, single quotes, or backslashes are automatically escaped for the libpq-style connection string. You do not need to quote or escape them yourself in Terraform configuration.
+~> **Special characters in credentials.** Passwords, paths, and SSL values that contain spaces, single quotes, or backslashes are escaped for you in the libpq connection string. Do not quote or escape them yourself in the Terraform config.
 
-~> **Managed PostgreSQL services.** If you connect to a service where your user is not a superuser (for example RDS, Cloud SQL, or Azure Database), set `superuser = false` in the provider block so privileged operations are skipped.
+~> **Managed PostgreSQL services.** If your user is not a superuser, as on RDS, Cloud SQL, or Azure Database, set `superuser = false` in the provider block. The provider then skips the operations that need superuser rights.
 
 ## Known Limitations
 
-- The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a separate connection. The provider operates on the database configured at the provider level.
-- `postgresql_user` password cannot be read back from PostgreSQL. After import, the password will not be in state.
-- `postgresql_grant` on ALL TABLES/SEQUENCES/FUNCTIONS does not track individual objects for drift detection; grants on specific objects and on databases/schemas are fully drift-detected.
+- The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a second connection. The provider always works on the database set in the provider block.
+- PostgreSQL never returns a user's password, so after an import the password is missing from state.
+- `postgresql_grant` on ALL TABLES, SEQUENCES, or FUNCTIONS does not track single objects for drift. Grants on named objects, databases, and schemas are checked in full.
 
 ## Compatibility
 

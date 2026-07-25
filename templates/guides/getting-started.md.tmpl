@@ -2,18 +2,18 @@
 page_title: "Getting Started with the PostgreSQL Provider"
 subcategory: "Guides"
 description: |-
-  Learn how to configure the Terraform PostgreSQL provider and create your first user and database.
+  How to configure the Terraform PostgreSQL provider and create your first user and database.
 ---
 
 # Getting Started with the PostgreSQL Provider
 
-This guide walks you through configuring the PostgreSQL provider and creating your first managed resources.
+This guide shows you how to configure the PostgreSQL provider and create your first resources.
 
 ## Prerequisites
 
 - Terraform 1.0 or later
 - A running PostgreSQL instance (local or remote)
-- A PostgreSQL user with sufficient privileges (typically a superuser or a role with `CREATEROLE` and `CREATEDB`)
+- A PostgreSQL user with enough privileges: a superuser, or a role with `CREATEROLE` and `CREATEDB`
 
 ## Provider Configuration
 
@@ -41,7 +41,7 @@ provider "postgresql" {
 
 ### Using Environment Variables
 
-Instead of hardcoding credentials, you can use environment variables. The provider reads these as fallback values when the corresponding attribute is not set:
+Instead of writing credentials in the config, you can use environment variables. The provider falls back to them when the matching attribute is not set:
 
 ```shell
 export PGHOST=localhost
@@ -52,7 +52,7 @@ export PGDATABASE=postgres
 export PGSSLMODE=prefer
 ```
 
-With environment variables set, the provider block can be simplified:
+With the variables set, the provider block gets much shorter:
 
 ```terraform
 provider "postgresql" {}
@@ -60,7 +60,7 @@ provider "postgresql" {}
 
 ### Connection Tuning
 
-The provider supports several attributes for connection management. All time-based attributes are expressed in **seconds** (integer).
+The provider has several attributes for connection management. Every time value is a whole number of **seconds**.
 
 ```terraform
 provider "postgresql" {
@@ -78,10 +78,10 @@ provider "postgresql" {
 
 - `max_connections` -- Maximum number of open connections to the database. Default: `10`.
 - `max_idle_connections` -- Maximum number of idle connections in the pool. Default: `5`.
-- `conn_max_lifetime` -- Maximum lifetime of a connection in seconds. Connections older than this are closed before reuse. `0` means no limit. Default: `0`.
-- `conn_max_idle_time` -- Maximum time in seconds a connection can sit idle before being closed. `0` means no limit. Default: `0`.
+- `conn_max_lifetime` -- How long a connection can live, in seconds. Older connections are closed instead of reused. `0` means no limit. Default: `0`.
+- `conn_max_idle_time` -- How long a connection can sit idle before it is closed, in seconds. `0` means no limit. Default: `0`.
 
-~> **Note:** For managed PostgreSQL services such as RDS, Cloud SQL, or Azure Database, set `superuser = false` so the provider skips operations that require superuser privileges:
+~> **Note:** On managed PostgreSQL services like RDS, Cloud SQL, or Azure Database, set `superuser = false`. The provider then skips the operations that need superuser rights:
 >
 > ```terraform
 > provider "postgresql" {
@@ -92,23 +92,23 @@ provider "postgresql" {
 
 ### SSL Configuration
 
-For encrypted connections, configure the SSL-related attributes:
+For encrypted connections, set the SSL attributes:
 
 ```terraform
 provider "postgresql" {
-  host       = "db.example.com"
-  username   = "postgres"
-  password   = var.db_password
-  sslmode    = "verify-full"
-  sslcert    = "/path/to/client-cert.pem"
-  sslkey     = "/path/to/client-key.pem"
+  host        = "db.example.com"
+  username    = "postgres"
+  password    = var.db_password
+  sslmode     = "verify-full"
+  sslcert     = "/path/to/client-cert.pem"
+  sslkey      = "/path/to/client-key.pem"
   sslrootcert = "/path/to/ca-cert.pem"
 }
 ```
 
 ## Create Your First User
 
-Users in PostgreSQL are login roles. Create a simple user:
+Users in PostgreSQL are login roles. Create one:
 
 ```terraform
 resource "postgresql_user" "app_user" {
@@ -138,7 +138,7 @@ resource "postgresql_database" "app_db" {
 
 ## Verify the Results
 
-After applying, you can verify the resources were created:
+After the apply, check that both objects exist:
 
 ```shell
 psql -h localhost -U postgres -c "\du app_user"
@@ -147,7 +147,7 @@ psql -h localhost -U postgres -c "\l my_application"
 
 ## Reading Existing Resources
 
-You can also use data sources to read existing PostgreSQL objects:
+Data sources read PostgreSQL objects that already exist:
 
 ```terraform
 data "postgresql_role" "existing" {
@@ -165,7 +165,7 @@ output "postgres_role_id" {
 
 ## Complete Example
 
-Here is a complete working configuration that ties everything together:
+Here is a full working configuration:
 
 ```terraform
 terraform {
@@ -192,7 +192,7 @@ provider "postgresql" {
 
 resource "postgresql_user" "app_user" {
   name     = "app_user"
-  password = "changeme"
+  password = var.db_password
 }
 
 resource "postgresql_database" "app_db" {
@@ -209,4 +209,4 @@ resource "postgresql_schema" "app_schema" {
 
 ## Next Steps
 
-- [Access Control Guide](access-control) -- Learn how to set up roles and grants.
+- [Access Control Guide](access-control) -- How to set up roles and grants.
