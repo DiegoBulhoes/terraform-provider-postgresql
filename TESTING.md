@@ -142,10 +142,13 @@ way CI does. Use `make fmt` to actually format it.
 
 ### Selecting PostgreSQL Versions in CI
 
-The acceptance matrix is built at run time, not hardcoded. Both workflows
-show one checkbox per version on `workflow_dispatch` (`pg14` to `pg17`, all
-checked by default), and a small job turns the checked boxes into the
-matrix:
+**Release always runs all four versions.** `release.yml` has a fixed
+`["14", "15", "16", "17"]` matrix and no way to skip a version, so a tag can
+never ship on partial coverage.
+
+Only `test.yml` lets you pick. It shows one checkbox per version on
+`workflow_dispatch` (`pg14` to `pg17`, all checked by default), and the
+`resolve-matrix` job turns the checked boxes into the matrix:
 
 ```
 Run workflow ▾
@@ -153,27 +156,22 @@ Run workflow ▾
   [x] PostgreSQL 15      [x] PostgreSQL 17
 ```
 
-- **Pull requests and tag pushes** run all four. The inputs only exist for
+- **Pull requests** run all four. The inputs only exist for
   `workflow_dispatch`, so every `PG*` variable arrives empty and the
   `[ "$PG14" = "false" ] || selected+=(14)` test keeps it. No check on
   `github.event_name` is needed.
-- **Manual runs** (Actions → *Tests* or *Release* → *Run workflow*) run
-  exactly what you check. Unchecking everything fails the run with
-  `select at least one PostgreSQL version`. Without that guard, the empty
-  matrix would show up as a skipped job, which looks like a pass.
+- **Manual runs** (Actions → *Tests* → *Run workflow*) run exactly what you
+  check. Unchecking everything fails the run with `select at least one
+  PostgreSQL version`. Without that guard, the empty matrix would show up as
+  a skipped job, which looks like a pass.
 
-The job emitting the matrix is `resolve-matrix` in `test.yml`; in
-`release.yml` the same logic lives in the `version` job so the release
-path doesn't pay for an extra runner. Both write the resolved list to the
-run's Step Summary.
+The default version list lives in three places that are **not** connected:
+`PG_VERSIONS` in the Makefile, the checkbox list in `test.yml`, and the fixed
+matrix in `release.yml`. When you add a PostgreSQL version, update all three.
 
-This is the CI version of `make ci-acceptance PG_VERSIONS="16 17"`. The two
-defaults are **not** connected: one lives in `PG_VERSIONS` in the Makefile,
-the other in the checkbox list. When you add a PostgreSQL version, update
-both.
-
-Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`,
-so a manual run that unchecks `17` uploads no coverage.
+Caveat: in `test.yml` the Codecov upload is gated on
+`matrix.postgres_version == '17'`, so a manual run that unchecks `17` uploads
+no coverage.
 
 ### Reproducing a CI Failure Locally
 
