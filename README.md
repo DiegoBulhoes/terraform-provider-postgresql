@@ -2,7 +2,7 @@
 
 > 🚧 **This provider is under active development.** Some features may change before the first stable release.
 
-Terraform provider for managing PostgreSQL resources: roles, users, databases, schemas, and grants.
+Terraform provider for PostgreSQL. It manages roles, users, databases, schemas, and grants.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ provider "postgresql" {
 }
 ```
 
-The provider also accepts configuration via environment variables: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`.
+You can also configure the provider with environment variables: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`.
 
 ## Resources
 
@@ -59,8 +59,8 @@ The provider also accepts configuration via environment variables: `PGHOST`, `PG
 | [`postgresql_schemas`](docs/data-sources/schemas.md) | Lists schemas with filters |
 | [`postgresql_tables`](docs/data-sources/tables.md) | Lists tables with filters |
 | [`postgresql_extensions`](docs/data-sources/extensions.md) | Lists installed extensions |
-| [`postgresql_version`](docs/data-sources/version.md) | Reads server version info |
-| [`postgresql_query`](docs/data-sources/query.md) | Executes a SQL query and returns results |
+| [`postgresql_version`](docs/data-sources/version.md) | Reads the server version |
+| [`postgresql_query`](docs/data-sources/query.md) | Runs a SQL query and returns the rows |
 
 ## Examples
 
@@ -126,7 +126,7 @@ data "postgresql_query" "version" {
 
 ## Documentation
 
-Full documentation for each resource and data source is available in the [`docs/`](docs/) directory and on the [Terraform Registry](https://registry.terraform.io/providers/DiegoBulhoes/postgresql/latest/docs).
+Every resource and data source is documented in [`docs/`](docs/) and on the [Terraform Registry](https://registry.terraform.io/providers/DiegoBulhoes/postgresql/latest/docs).
 
 ## Development
 
@@ -138,7 +138,7 @@ cd terraform-provider-postgresql
 make build
 ```
 
-That's it. All Go tools (`golangci-lint`, `goimports`, `tfplugindocs`) are declared in `go.mod` and resolved automatically via `go tool` — no manual installation needed.
+That's it. The Go tools (`golangci-lint`, `goimports`, `tfplugindocs`) are declared in `go.mod` and resolved by `go tool`, so there is nothing to install by hand.
 
 ### Build
 
@@ -148,13 +148,13 @@ make build
 
 ### Tests
 
-Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically spin up a PostgreSQL instance via Docker. Requires Docker running.
+Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to start a PostgreSQL container. Docker must be running.
 
 ```bash
 make test             # Unit + acceptance tests (PG 14, 15, 16, 17)
 ```
 
-See [TESTING.md](TESTING.md) for more details.
+See [TESTING.md](TESTING.md) for the details.
 
 ### Lint & Format
 
@@ -169,7 +169,7 @@ make fmt    # gofmt + goimports (via go tool)
 make docs
 ```
 
-Documentation is generated from templates in `templates/` and examples in `examples/`. Do not edit files in `docs/` directly.
+The docs are generated from `templates/` and `examples/`. Never edit files in `docs/` by hand.
 
 ### Project structure
 
@@ -196,15 +196,15 @@ Documentation is generated from templates in `templates/` and examples in `examp
 
 ### Claude Code Skills
 
-This project uses custom [Claude Code](https://github.com/DiegoBulhoes/claude) skills (`.claude/`) to assist with development:
+This project ships custom [Claude Code](https://github.com/DiegoBulhoes/claude) skills in `.claude/`:
 
 | Skill | Description |
 |---|---|
-| `golang` | Go code generation following idiomatic conventions, with Terraform provider-specific patterns |
-| `terraform` | Terraform/OpenTofu IaC code generation following HashiCorp official style guide |
-| `explore` | Repository explorer for codebase analysis, dependency tracing, and gap reporting |
+| `golang` | Writes idiomatic Go, with Terraform provider patterns |
+| `terraform` | Writes Terraform and OpenTofu code in the official HashiCorp style |
+| `explore` | Explores the repository: analyses code, traces dependencies, reports gaps |
 
-An agent configuration (`terraform-expert`) is also available for advanced Terraform provider development tasks.
+There is also a `terraform-expert` agent for harder provider work.
 
 ## License
 
