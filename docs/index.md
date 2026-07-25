@@ -11,6 +11,16 @@ The PostgreSQL provider allows you to manage PostgreSQL resources such as roles,
 ## Example Usage
 
 ```terraform
+terraform {
+  required_providers {
+    postgresql = {
+      source  = "DiegoBulhoes/postgresql"
+      version = "~> 0.2"
+    }
+  }
+}
+
+# Minimal: local PostgreSQL with explicit credentials
 provider "postgresql" {
   host     = "localhost"
   port     = 5432
@@ -19,29 +29,94 @@ provider "postgresql" {
   database = "postgres"
   sslmode  = "prefer"
 }
+
+# Environment-driven: reads PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, PGSSLMODE
+provider "postgresql" {
+  alias = "from_env"
+}
+
+# Managed service (RDS / Cloud SQL / Azure Database): superuser = false skips
+# operations that require superuser privileges on the server.
+provider "postgresql" {
+  alias    = "managed"
+  host     = "myapp.abc123.us-east-1.rds.amazonaws.com"
+  port     = 5432
+  username = "masteruser"
+  password = var.db_password
+  database = "postgres"
+  sslmode  = "require"
+
+  superuser = false
+}
+
+# TLS with client certificates. Paths containing spaces, single quotes, or
+# backslashes are automatically escaped in the connection string.
+provider "postgresql" {
+  alias       = "mtls"
+  host        = "db.example.com"
+  username    = "app"
+  password    = var.db_password
+  database    = "app"
+  sslmode     = "verify-full"
+  sslcert     = "/etc/tls/client.crt"
+  sslkey      = "/etc/tls/client.key"
+  sslrootcert = "/etc/tls/ca.crt"
+}
+
+# Tuned connection pool for high-parallelism Terraform runs. All time-based
+# attributes are integer seconds (not duration strings).
+provider "postgresql" {
+  alias    = "pooled"
+  host     = "db.example.com"
+  username = "postgres"
+  password = var.db_password
+
+  connect_timeout      = 30
+  max_connections      = 20
+  max_idle_connections = 10
+  conn_max_lifetime    = 1800 # 30 minutes
+  conn_max_idle_time   = 300  # 5 minutes
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
 ```
 
 ## Authentication
 
 The provider supports configuration via attributes or environment variables:
 
-| Attribute         | Environment Variable | Default     |
-|-------------------|----------------------|-------------|
-| `host`            | `PGHOST`             | `localhost` |
-| `port`            | `PGPORT`             | `5432`      |
-| `username`        | `PGUSER`             | `postgres`  |
-| `password`        | `PGPASSWORD`         | (empty)     |
-| `database`        | `PGDATABASE`         | `postgres`  |
-| `sslmode`         | `PGSSLMODE`          | `prefer`    |
-| `connect_timeout` | —                    | `30`        |
+| Attribute              | Environment Variable | Default     |
+|------------------------|----------------------|-------------|
+| `host`                 | `PGHOST`             | `localhost` |
+| `port`                 | `PGPORT`             | `5432`      |
+| `username`             | `PGUSER`             | `postgres`  |
+| `password`             | `PGPASSWORD`         | (empty)     |
+| `database`             | `PGDATABASE`         | `postgres`  |
+| `sslmode`              | `PGSSLMODE`          | `prefer`    |
+| `sslcert`              | `PGSSLCERT`          | (empty)     |
+| `sslkey`               | `PGSSLKEY`           | (empty)     |
+| `sslrootcert`          | `PGSSLROOTCERT`      | (empty)     |
+| `connect_timeout`      | —                    | `30`        |
+| `max_connections`      | —                    | `10`        |
+| `max_idle_connections` | —                    | `5`         |
+| `conn_max_lifetime`    | —                    | `0` (no limit) |
+| `conn_max_idle_time`   | —                    | `0` (no limit) |
+| `superuser`            | —                    | `true`      |
 
 Environment variables are used as fallback when the corresponding attribute is not set.
+
+~> **Special characters in credentials.** Passwords, paths, and SSL parameters containing spaces, single quotes, or backslashes are automatically escaped for the libpq-style connection string. You do not need to quote or escape them yourself in Terraform configuration.
+
+~> **Managed PostgreSQL services.** If you connect to a service where your user is not a superuser (for example RDS, Cloud SQL, or Azure Database), set `superuser = false` in the provider block so privileged operations are skipped.
 
 ## Known Limitations
 
 - The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a separate connection. The provider operates on the database configured at the provider level.
 - `postgresql_user` password cannot be read back from PostgreSQL. After import, the password will not be in state.
-- `postgresql_grant` on ALL TABLES/SEQUENCES/FUNCTIONS does not track individual objects for drift detection.
+- `postgresql_grant` on ALL TABLES/SEQUENCES/FUNCTIONS does not track individual objects for drift detection; grants on specific objects and on databases/schemas are fully drift-detected.
 
 ## Compatibility
 
@@ -64,8 +139,8 @@ Environment variables are used as fallback when the corresponding attribute is n
 - `database` (String) Default database to connect to. Default: postgres. Can also be set with the PGDATABASE environment variable.
 - `expected_version` (String) Expected PostgreSQL server major version (e.g. "16", "15"). When set, the provider can skip features not available in older versions. If omitted, the provider detects the version automatically.
 - `host` (String) PostgreSQL server hostname. Can also be set with the PGHOST environment variable.
-- `max_connections` (Number) Maximum number of open connections to the database. Default: 5.
-- `max_idle_connections` (Number) Maximum number of idle connections in the pool. Default: 2.
+- `max_connections` (Number) Maximum number of open connections to the database. Default: 10.
+- `max_idle_connections` (Number) Maximum number of idle connections in the pool. Default: 5.
 - `password` (String, Sensitive) PostgreSQL password. Can also be set with the PGPASSWORD environment variable.
 - `port` (Number) PostgreSQL server port. Default: 5432. Can also be set with the PGPORT environment variable.
 - `sslcert` (String) Path to the SSL client certificate. Can also be set with the PGSSLCERT environment variable.

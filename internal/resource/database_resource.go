@@ -3,9 +3,9 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -177,7 +177,7 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	createTimeout, d := plan.Timeouts.Create(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -281,7 +281,7 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
-	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	updateTimeout, d := plan.Timeouts.Update(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -358,7 +358,7 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	deleteTimeout, d := state.Timeouts.Delete(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -440,13 +440,13 @@ func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseReso
 		&tablespaceName,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			diags.AddError("Database not found", fmt.Sprintf("Database %s does not exist.", dbName))
 			return diags
 		}
 		diags.AddError(
 			"Error reading database",
-			fmt.Sprintf("Could not read database %s: %s", dbName, err.Error()),
+			fmt.Errorf("read database %s: %w", dbName, err).Error(),
 		)
 		return diags
 	}

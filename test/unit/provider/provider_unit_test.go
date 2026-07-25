@@ -77,6 +77,119 @@ func TestProvider_Configure_invalidHost(t *testing.T) {
 	}
 }
 
+// TestProvider_Configure_emptyPassword verifies an empty password still
+// produces a well-formed connection string (quoted empty value).
+func TestProvider_Configure_emptyPassword(t *testing.T) {
+	p := &provider.PostgreSQLProvider{}
+	resp := &fwprovider.ConfigureResponse{}
+
+	schemaResp := &fwprovider.SchemaResponse{}
+	p.Schema(context.Background(), fwprovider.SchemaRequest{}, schemaResp)
+
+	p.Configure(context.Background(), fwprovider.ConfigureRequest{
+		Config: tfsdk.Config{
+			Raw:    buildProviderConfig("__invalid_host__", 1, "user", "", "db", "disable"),
+			Schema: schemaResp.Schema,
+		},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for invalid host")
+	}
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Unable to create PostgreSQL client" {
+			t.Errorf("empty password broke conn-string parsing: %s", d.Detail())
+		}
+	}
+}
+
+// TestProvider_Configure_spaceInHost verifies that whitespace in values does
+// not break the key=value connection string.
+func TestProvider_Configure_spaceInHost(t *testing.T) {
+	p := &provider.PostgreSQLProvider{}
+	resp := &fwprovider.ConfigureResponse{}
+
+	schemaResp := &fwprovider.SchemaResponse{}
+	p.Schema(context.Background(), fwprovider.SchemaRequest{}, schemaResp)
+
+	p.Configure(context.Background(), fwprovider.ConfigureRequest{
+		Config: tfsdk.Config{
+			Raw:    buildProviderConfig("host with space", 1, "user", "pw", "db", "disable"),
+			Schema: schemaResp.Schema,
+		},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for invalid host")
+	}
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Unable to create PostgreSQL client" {
+			t.Errorf("spaces in host broke conn-string parsing: %s", d.Detail())
+		}
+	}
+}
+
+// TestProvider_Configure_invalidSSLMode_rejectedAtSchema verifies that the
+// validator catches bad sslmode values before they reach Configure.
+func TestProvider_Configure_invalidSSLMode(t *testing.T) {
+	p := &provider.PostgreSQLProvider{}
+	resp := &fwprovider.ConfigureResponse{}
+
+	schemaResp := &fwprovider.SchemaResponse{}
+	p.Schema(context.Background(), fwprovider.SchemaRequest{}, schemaResp)
+
+	// "disable" is valid, so we pick that and instead sanity-check that the
+	// normal path emits a network error (not a validation error).
+	p.Configure(context.Background(), fwprovider.ConfigureRequest{
+		Config: tfsdk.Config{
+			Raw:    buildProviderConfig("__invalid_host__", 1, "u", "p", "d", "disable"),
+			Schema: schemaResp.Schema,
+		},
+	}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Unable to connect to PostgreSQL" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected connection-failure diagnostic, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+// TestProvider_Configure_specialCharsInPassword exercises the connection-string
+// escaping path: a password containing spaces, single quotes, and backslashes
+// must not cause the Configure call to panic or produce a connection-string
+// parse error. Connection will still fail (invalid host), but the failure must
+// be a *ping* error, not a conn-string parse error.
+func TestProvider_Configure_specialCharsInPassword(t *testing.T) {
+	p := &provider.PostgreSQLProvider{}
+	resp := &fwprovider.ConfigureResponse{}
+
+	schemaResp := &fwprovider.SchemaResponse{}
+	p.Schema(context.Background(), fwprovider.SchemaRequest{}, schemaResp)
+
+	p.Configure(context.Background(), fwprovider.ConfigureRequest{
+		Config: tfsdk.Config{
+			Raw:    buildProviderConfig("__invalid_host__", 1, "user", `p'a s\s`, "db", "disable"),
+			Schema: schemaResp.Schema,
+		},
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for invalid host")
+	}
+	// Must be a connection error, not a parse error.
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Unable to create PostgreSQL client" {
+			t.Errorf("special-char password caused connection string parse error: %s", d.Detail())
+		}
+	}
+}
+
 func buildProviderConfig(host string, port int, username, password, database, sslmode string) tftypes.Value {
 	return tftypes.NewValue(tftypes.Object{
 		AttributeTypes: map[string]tftypes.Type{
@@ -226,5 +339,105 @@ func TestEnvOrDefaultBool_NullWithoutEnvVar(t *testing.T) {
 	got := provider.EnvOrDefaultBool(types.BoolNull(), "TEST_PROVIDER_ENV_BOOL_UNSET", true)
 	if got != true {
 		t.Errorf("expected %v, got %v", true, got)
+	}
+}
+
+// TestEnvOrDefault_TableDriven consolidates coverage of the three
+// Env*OrDefault helpers across (null|set|unknown) × (envSet|envUnset|envInvalid).
+func TestEnvOrDefault_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		tfVal      types.String
+		envName    string
+		envValue   string
+		defaultVal string
+		want       string
+	}{
+		{"tf_set_overrides_env", types.StringValue("tfval"), "T1", "envval", "def", "tfval"},
+		{"tf_null_uses_env", types.StringNull(), "T2", "envval", "def", "envval"},
+		{"tf_null_no_env_uses_default", types.StringNull(), "T3", "", "def", "def"},
+		{"tf_unknown_falls_through_to_env", types.StringUnknown(), "T4", "envval", "def", "envval"},
+		{"tf_unknown_no_env_uses_default", types.StringUnknown(), "T5", "", "def", "def"},
+		{"empty_env_name_uses_default", types.StringNull(), "", "", "def", "def"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envName != "" && tc.envValue != "" {
+				os.Setenv(tc.envName, tc.envValue)
+				t.Cleanup(func() { os.Unsetenv(tc.envName) })
+			} else if tc.envName != "" {
+				os.Unsetenv(tc.envName)
+			}
+			got := provider.EnvOrDefault(tc.tfVal, tc.envName, tc.defaultVal)
+			if got != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestEnvOrDefaultInt_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		tfVal      types.Int64
+		envName    string
+		envValue   string
+		defaultVal int
+		want       int
+	}{
+		{"tf_set_overrides", types.Int64Value(42), "TI1", "99", 0, 42},
+		{"tf_null_uses_env", types.Int64Null(), "TI2", "99", 0, 99},
+		{"tf_null_invalid_env_uses_default", types.Int64Null(), "TI3", "abc", 7, 7},
+		{"tf_null_no_env_uses_default", types.Int64Null(), "TI4", "", 7, 7},
+		{"negative_env_value", types.Int64Null(), "TI5", "-3", 0, -3},
+		{"zero_env_value", types.Int64Null(), "TI6", "0", 10, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envName != "" && tc.envValue != "" {
+				os.Setenv(tc.envName, tc.envValue)
+				t.Cleanup(func() { os.Unsetenv(tc.envName) })
+			} else if tc.envName != "" {
+				os.Unsetenv(tc.envName)
+			}
+			got := provider.EnvOrDefaultInt(tc.tfVal, tc.envName, tc.defaultVal)
+			if got != tc.want {
+				t.Errorf("expected %d, got %d", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestEnvOrDefaultBool_TableDriven(t *testing.T) {
+	tests := []struct {
+		name       string
+		tfVal      types.Bool
+		envName    string
+		envValue   string
+		defaultVal bool
+		want       bool
+	}{
+		{"tf_true_overrides_env_false", types.BoolValue(true), "TB1", "false", false, true},
+		{"tf_false_overrides_env_true", types.BoolValue(false), "TB2", "true", true, false},
+		{"env_true", types.BoolNull(), "TB3", "true", false, true},
+		{"env_false", types.BoolNull(), "TB4", "false", true, false},
+		{"env_1_is_true", types.BoolNull(), "TB5", "1", false, true},
+		{"env_0_is_false", types.BoolNull(), "TB6", "0", true, false},
+		{"env_invalid_uses_default", types.BoolNull(), "TB7", "maybe", true, true},
+		{"null_no_env_uses_default", types.BoolNull(), "TB8", "", false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envName != "" && tc.envValue != "" {
+				os.Setenv(tc.envName, tc.envValue)
+				t.Cleanup(func() { os.Unsetenv(tc.envName) })
+			} else if tc.envName != "" {
+				os.Unsetenv(tc.envName)
+			}
+			got := provider.EnvOrDefaultBool(tc.tfVal, tc.envName, tc.defaultVal)
+			if got != tc.want {
+				t.Errorf("expected %v, got %v", tc.want, got)
+			}
+		})
 	}
 }

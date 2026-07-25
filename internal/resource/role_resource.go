@@ -3,9 +3,9 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -178,7 +178,7 @@ func (r *RoleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	createTimeout, d := plan.Timeouts.Create(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -195,13 +195,13 @@ func (r *RoleResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Error starting transaction", err.Error())
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer common.LogRollback(ctx, tx)
 
 	_, err = tx.ExecContext(ctx, sqlStr)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating role",
-			fmt.Sprintf("Could not create role %s: %s", roleName, err.Error()),
+			fmt.Errorf("create role %s: %w", roleName, err).Error(),
 		)
 		return
 	}
@@ -257,7 +257,7 @@ func (r *RoleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	updateTimeout, d := plan.Timeouts.Update(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -321,7 +321,7 @@ func (r *RoleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	deleteTimeout, d := state.Timeouts.Delete(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -353,40 +353,15 @@ func (r *RoleResource) ImportState(ctx context.Context, req resource.ImportState
 }
 
 func (r *RoleResource) BuildRoleOptions(_ context.Context, model *RoleResourceModel) string {
-	var opts []string
-
-	opts = append(opts, "NOLOGIN")
-
-	if model.Superuser.ValueBool() {
-		opts = append(opts, "SUPERUSER")
-	} else {
-		opts = append(opts, "NOSUPERUSER")
-	}
-
-	if model.CreateDatabase.ValueBool() {
-		opts = append(opts, "CREATEDB")
-	} else {
-		opts = append(opts, "NOCREATEDB")
-	}
-
-	if model.CreateRole.ValueBool() {
-		opts = append(opts, "CREATEROLE")
-	} else {
-		opts = append(opts, "NOCREATEROLE")
-	}
-
-	if model.Replication.ValueBool() {
-		opts = append(opts, "REPLICATION")
-	} else {
-		opts = append(opts, "NOREPLICATION")
-	}
-
-	opts = append(opts, fmt.Sprintf("CONNECTION LIMIT %d", model.ConnectionLimit.ValueInt64()))
-
-	if len(opts) == 0 {
-		return ""
-	}
-	return " WITH " + strings.Join(opts, " ")
+	noLogin := false
+	return common.BuildRoleOptions(common.RoleOptions{
+		Login:           &noLogin,
+		Superuser:       model.Superuser.ValueBool(),
+		CreateDatabase:  model.CreateDatabase.ValueBool(),
+		CreateRole:      model.CreateRole.ValueBool(),
+		Replication:     model.Replication.ValueBool(),
+		ConnectionLimit: model.ConnectionLimit.ValueInt64(),
+	})
 }
 
 func (r *RoleResource) ReadRole(ctx context.Context, model *RoleResourceModel) diag.Diagnostics {
@@ -398,13 +373,10 @@ func (r *RoleResource) ReadRole(ctx context.Context, model *RoleResourceModel) d
 	var rolSuper, rolCreateDB, rolCreateRole, rolReplication bool
 	var rolConnLimit int64
 
-	query := fmt.Sprintf(
-		`SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolconnlimit
-		 FROM pg_catalog.pg_roles WHERE rolname = %s`,
-		pq.QuoteLiteral(roleName),
-	)
+	const roleQuery = `SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolconnlimit
+		FROM pg_catalog.pg_roles WHERE rolname = $1`
 
-	err := r.DB.QueryRowContext(ctx, query).Scan(
+	err := r.DB.QueryRowContext(ctx, roleQuery, roleName).Scan(
 		&oid,
 		&rolSuper,
 		&rolCreateDB,
@@ -413,11 +385,11 @@ func (r *RoleResource) ReadRole(ctx context.Context, model *RoleResourceModel) d
 		&rolConnLimit,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			diags.AddError("Role not found", fmt.Sprintf("Role %s does not exist.", roleName))
 			return diags
 		}
-		diags.AddError("Error reading role", fmt.Sprintf("Could not read role %s: %s", roleName, err.Error()))
+		diags.AddError("Error reading role", fmt.Errorf("read role %s: %w", roleName, err).Error())
 		return diags
 	}
 
@@ -441,7 +413,11 @@ func (r *RoleResource) GrantPrivileges(ctx context.Context, exec common.ExecCont
 	var diags diag.Diagnostics
 
 	for _, priv := range privileges {
-		privSlice := common.StringSetToSlice(ctx, priv.Privileges)
+		privSlice, err := common.NormalizePrivileges(common.StringSetToSlice(ctx, priv.Privileges))
+		if err != nil {
+			diags.AddError("Invalid privileges", err.Error())
+			return diags
+		}
 		privList := strings.Join(privSlice, ", ")
 		objectType := strings.ToLower(priv.ObjectType.ValueString())
 		database := priv.Database.ValueString()
@@ -496,7 +472,8 @@ func (r *RoleResource) RevokePrivileges(ctx context.Context, exec common.ExecCon
 	return diags
 }
 
-// DiffRoles computes which roles to grant and which to revoke.
+// DiffRoles computes which roles to grant and which to revoke. The returned
+// slices are deduplicated even if the inputs contain repeated role names.
 func DiffRoles(oldRoles, newRoles []string) (toGrant, toRevoke []string) {
 	oldSet := make(map[string]struct{}, len(oldRoles))
 	for _, r := range oldRoles {
@@ -507,15 +484,27 @@ func DiffRoles(oldRoles, newRoles []string) (toGrant, toRevoke []string) {
 		newSet[r] = struct{}{}
 	}
 
+	emitted := make(map[string]struct{}, len(newRoles))
 	for _, r := range newRoles {
-		if _, exists := oldSet[r]; !exists {
-			toGrant = append(toGrant, r)
+		if _, exists := oldSet[r]; exists {
+			continue
 		}
+		if _, dup := emitted[r]; dup {
+			continue
+		}
+		emitted[r] = struct{}{}
+		toGrant = append(toGrant, r)
 	}
+	emitted = make(map[string]struct{}, len(oldRoles))
 	for _, r := range oldRoles {
-		if _, exists := newSet[r]; !exists {
-			toRevoke = append(toRevoke, r)
+		if _, exists := newSet[r]; exists {
+			continue
 		}
+		if _, dup := emitted[r]; dup {
+			continue
+		}
+		emitted[r] = struct{}{}
+		toRevoke = append(toRevoke, r)
 	}
 	return
 }

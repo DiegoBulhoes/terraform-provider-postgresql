@@ -104,7 +104,7 @@ func (d *QueryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		resp.Diagnostics.AddError("Error starting transaction", err.Error())
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer common.LogRollback(ctx, tx)
 
 	rows, err := tx.QueryContext(ctx, queryStr)
 	if err != nil {

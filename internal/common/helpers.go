@@ -3,7 +3,9 @@ package common
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +13,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/lib/pq"
 )
+
+// DefaultTimeout is the default per-operation timeout used by resources.
+const DefaultTimeout = 5 * time.Minute
 
 // Scanner abstracts a single-row query result (like *sql.Row).
 type Scanner interface {
@@ -51,11 +56,17 @@ type ExecContext interface {
 // DBWrapper wraps *sql.DB to satisfy the DBTX interface, returning abstract
 // interfaces instead of concrete sql types.
 type DBWrapper struct {
-	DB *sql.DB
+	DB        *sql.DB
+	Superuser bool
 }
 
 func NewDBWrapper(db *sql.DB) *DBWrapper {
-	return &DBWrapper{DB: db}
+	return &DBWrapper{DB: db, Superuser: true}
+}
+
+// NewDBWrapperWithOptions builds a wrapper with explicit options.
+func NewDBWrapperWithOptions(db *sql.DB, superuser bool) *DBWrapper {
+	return &DBWrapper{DB: db, Superuser: superuser}
 }
 
 func (w *DBWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -183,6 +194,151 @@ func IsRetryableError(err error) bool {
 		return retryableErrorCodes[pqErr.Code]
 	}
 	return false
+}
+
+// LogRollback rolls back a transaction and logs the error if rollback itself fails.
+// The sql.ErrTxDone result is ignored because it only means the tx was already committed.
+func LogRollback(ctx context.Context, tx Tx) {
+	err := tx.Rollback()
+	if err == nil || errors.Is(err, sql.ErrTxDone) {
+		return
+	}
+	tflog.Warn(ctx, "Transaction rollback failed", map[string]interface{}{
+		"error": err.Error(),
+	})
+}
+
+// validPrivileges is the set of privilege keywords accepted by PostgreSQL for
+// object-level GRANT/REVOKE. Values are uppercase.
+var validPrivileges = map[string]struct{}{
+	"ALL":            {},
+	"ALL PRIVILEGES": {},
+	"SELECT":         {},
+	"INSERT":         {},
+	"UPDATE":         {},
+	"DELETE":         {},
+	"TRUNCATE":       {},
+	"REFERENCES":     {},
+	"TRIGGER":        {},
+	"USAGE":          {},
+	"CREATE":         {},
+	"CONNECT":        {},
+	"TEMPORARY":      {},
+	"TEMP":           {},
+	"EXECUTE":        {},
+	"MAINTAIN":       {},
+	"SET":            {},
+	"ALTER SYSTEM":   {},
+}
+
+// NormalizePrivileges uppercases, trims, and validates privilege keywords.
+// Returns an error listing any keywords that are not valid PostgreSQL privileges.
+func NormalizePrivileges(privs []string) ([]string, error) {
+	out := make([]string, 0, len(privs))
+	var bad []string
+	seen := make(map[string]struct{}, len(privs))
+	for _, p := range privs {
+		up := strings.ToUpper(strings.TrimSpace(p))
+		if up == "" {
+			continue
+		}
+		if _, ok := validPrivileges[up]; !ok {
+			bad = append(bad, p)
+			continue
+		}
+		if _, dup := seen[up]; dup {
+			continue
+		}
+		seen[up] = struct{}{}
+		out = append(out, up)
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		return nil, fmt.Errorf("invalid privilege(s): %s", strings.Join(bad, ", "))
+	}
+	return out, nil
+}
+
+// RoleOptions captures the set of option flags that can be applied to a role
+// (or user) via CREATE/ALTER ROLE ... WITH. Fields left empty or nil are
+// omitted from the output clause.
+type RoleOptions struct {
+	// Login controls the LOGIN/NOLOGIN keyword. When nil, neither is emitted.
+	Login *bool
+	// Superuser, CreateDatabase, CreateRole, Replication always emit the
+	// positive or negative keyword.
+	Superuser       bool
+	CreateDatabase  bool
+	CreateRole      bool
+	Replication     bool
+	ConnectionLimit int64
+	// Password, if non-empty, emits PASSWORD <quoted>.
+	Password string
+	// ValidUntil, if non-empty, emits VALID UNTIL <quoted>.
+	ValidUntil string
+}
+
+// BuildRoleOptions renders a " WITH ..." clause from the given role options.
+// Returns an empty string when no options would be emitted.
+func BuildRoleOptions(o RoleOptions) string {
+	var opts []string
+
+	if o.Login != nil {
+		if *o.Login {
+			opts = append(opts, "LOGIN")
+		} else {
+			opts = append(opts, "NOLOGIN")
+		}
+	}
+
+	if o.Superuser {
+		opts = append(opts, "SUPERUSER")
+	} else {
+		opts = append(opts, "NOSUPERUSER")
+	}
+
+	if o.CreateDatabase {
+		opts = append(opts, "CREATEDB")
+	} else {
+		opts = append(opts, "NOCREATEDB")
+	}
+
+	if o.CreateRole {
+		opts = append(opts, "CREATEROLE")
+	} else {
+		opts = append(opts, "NOCREATEROLE")
+	}
+
+	if o.Replication {
+		opts = append(opts, "REPLICATION")
+	} else {
+		opts = append(opts, "NOREPLICATION")
+	}
+
+	opts = append(opts, fmt.Sprintf("CONNECTION LIMIT %d", o.ConnectionLimit))
+
+	if o.Password != "" {
+		opts = append(opts, fmt.Sprintf("PASSWORD %s", pq.QuoteLiteral(o.Password)))
+	}
+
+	if o.ValidUntil != "" {
+		opts = append(opts, fmt.Sprintf("VALID UNTIL %s", pq.QuoteLiteral(o.ValidUntil)))
+	}
+
+	if len(opts) == 0 {
+		return ""
+	}
+	return " WITH " + strings.Join(opts, " ")
+}
+
+// QuoteConnStringValue escapes a value for inclusion in a libpq-style
+// "key=value" connection string. Values containing whitespace, quotes, or
+// backslashes are wrapped in single quotes with embedded quotes/backslashes
+// escaped. See https://www.postgresql.org/docs/current/libpq-connect.html.
+func QuoteConnStringValue(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, `'`, `\'`)
+	return "'" + v + "'"
 }
 
 // RetryExec executes a SQL statement with retry logic for transient errors.

@@ -11,6 +11,14 @@ Manages a PostgreSQL schema.
 
 ~> **Note:** The `database` attribute does not open a separate connection to the specified database. The provider always operates on the database configured at the provider level. To manage schemas in a different database, configure a separate provider instance.
 
+## Behavior Details
+
+- **Rename.** Changing `name` issues `ALTER SCHEMA ... RENAME TO ...` and preserves schema contents (tables, views, functions).
+- **Owner change.** Changing `owner` issues `ALTER SCHEMA ... OWNER TO ...`; the connected user must either own the schema or be a superuser, and must be a member of the new owner role.
+- **`if_not_exists = true`.** Adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. Useful for provisioning into databases shared with other automation; the provider will still manage the schema's state on subsequent applies (owner changes, renames, etc.) but will not fail if someone else created it first.
+- **Drop behavior.** Delete issues a plain `DROP SCHEMA` (not `CASCADE`). If the schema contains objects (tables, views, etc.), the drop will fail — drop the contents first or manage them as Terraform resources so they're destroyed in the right order.
+- **Drift detection.** On refresh, the provider re-reads `schema_owner` from `information_schema.schemata`. If the schema no longer exists, it's silently removed from state.
+
 ## Example Usage
 
 ```terraform

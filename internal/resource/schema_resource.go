@@ -3,9 +3,9 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -109,7 +109,7 @@ func (r *SchemaResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	createTimeout, d := plan.Timeouts.Create(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -187,8 +187,8 @@ func (r *SchemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 		"SELECT schema_owner FROM information_schema.schemata WHERE schema_name = $1",
 		schemaName,
 	).Scan(&owner)
-	if err == sql.ErrNoRows {
-		tflog.Warn(ctx, "Schema not found, removing from state", map[string]interface{}{
+	if errors.Is(err, sql.ErrNoRows) {
+		tflog.Info(ctx, "Schema not found, removing from state", map[string]interface{}{
 			"schema": schemaName,
 		})
 		resp.State.RemoveResource(ctx)
@@ -197,7 +197,7 @@ func (r *SchemaResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading schema",
-			fmt.Sprintf("Could not read schema %q: %s", schemaName, err.Error()),
+			fmt.Errorf("read schema %q: %w", schemaName, err).Error(),
 		)
 		return
 	}
@@ -228,7 +228,7 @@ func (r *SchemaResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	updateTimeout, d := plan.Timeouts.Update(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -303,7 +303,7 @@ func (r *SchemaResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	deleteTimeout, d := state.Timeouts.Delete(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return

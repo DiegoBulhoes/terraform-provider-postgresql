@@ -3,10 +3,9 @@ package resource
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
-	"strings"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -154,7 +153,7 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	createTimeout, d := plan.Timeouts.Create(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -171,13 +170,13 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		resp.Diagnostics.AddError("Error starting transaction", err.Error())
 		return
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer common.LogRollback(ctx, tx)
 
 	_, err = tx.ExecContext(ctx, sqlStr)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating user",
-			fmt.Sprintf("Could not create user %s: %s", userName, err.Error()),
+			fmt.Errorf("create user %s: %w", userName, err).Error(),
 		)
 		return
 	}
@@ -250,7 +249,7 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	updateTimeout, d := plan.Timeouts.Update(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -349,7 +348,7 @@ func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	deleteTimeout, d := state.Timeouts.Delete(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -374,46 +373,22 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 }
 
 func (r *UserResource) BuildUserOptions(_ context.Context, model *UserResourceModel) string {
-	var opts []string
-
-	if model.Superuser.ValueBool() {
-		opts = append(opts, "SUPERUSER")
-	} else {
-		opts = append(opts, "NOSUPERUSER")
-	}
-
-	if model.CreateDatabase.ValueBool() {
-		opts = append(opts, "CREATEDB")
-	} else {
-		opts = append(opts, "NOCREATEDB")
-	}
-
-	if model.CreateRole.ValueBool() {
-		opts = append(opts, "CREATEROLE")
-	} else {
-		opts = append(opts, "NOCREATEROLE")
-	}
-
-	if model.Replication.ValueBool() {
-		opts = append(opts, "REPLICATION")
-	} else {
-		opts = append(opts, "NOREPLICATION")
-	}
-
-	opts = append(opts, fmt.Sprintf("CONNECTION LIMIT %d", model.ConnectionLimit.ValueInt64()))
-
+	var password, validUntil string
 	if common.IsSet(model.Password) {
-		opts = append(opts, fmt.Sprintf("PASSWORD %s", pq.QuoteLiteral(model.Password.ValueString())))
+		password = model.Password.ValueString()
 	}
-
 	if common.IsSet(model.ValidUntil) {
-		opts = append(opts, fmt.Sprintf("VALID UNTIL %s", pq.QuoteLiteral(model.ValidUntil.ValueString())))
+		validUntil = model.ValidUntil.ValueString()
 	}
-
-	if len(opts) == 0 {
-		return ""
-	}
-	return " WITH " + strings.Join(opts, " ")
+	return common.BuildRoleOptions(common.RoleOptions{
+		Superuser:       model.Superuser.ValueBool(),
+		CreateDatabase:  model.CreateDatabase.ValueBool(),
+		CreateRole:      model.CreateRole.ValueBool(),
+		Replication:     model.Replication.ValueBool(),
+		ConnectionLimit: model.ConnectionLimit.ValueInt64(),
+		Password:        password,
+		ValidUntil:      validUntil,
+	})
 }
 
 func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) diag.Diagnostics {
@@ -426,13 +401,11 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 	var rolConnLimit int64
 	var rolValidUntil sql.NullString
 
-	query := fmt.Sprintf(
-		`SELECT oid, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolconnlimit, rolvaliduntil
-		 FROM pg_catalog.pg_roles WHERE rolname = %s`,
-		pq.QuoteLiteral(userName),
-	)
+	const userQuery = `SELECT oid, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+		rolreplication, rolconnlimit, rolvaliduntil
+		FROM pg_catalog.pg_roles WHERE rolname = $1`
 
-	err := r.DB.QueryRowContext(ctx, query).Scan(
+	err := r.DB.QueryRowContext(ctx, userQuery, userName).Scan(
 		&oid,
 		&rolCanLogin,
 		&rolSuper,
@@ -443,11 +416,11 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 		&rolValidUntil,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			diags.AddError("User not found", fmt.Sprintf("User %s does not exist.", userName))
 			return diags
 		}
-		diags.AddError("Error reading user", fmt.Sprintf("Could not read user %s: %s", userName, err.Error()))
+		diags.AddError("Error reading user", fmt.Errorf("read user %s: %w", userName, err).Error())
 		return diags
 	}
 
@@ -472,16 +445,13 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 	}
 
 	// Read role memberships
-	memberQuery := fmt.Sprintf(
-		`SELECT r.rolname
-		 FROM pg_catalog.pg_auth_members m
-		 JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-		 WHERE m.member = %d
-		 ORDER BY r.rolname`,
-		oid,
-	)
+	const memberQuery = `SELECT r.rolname
+		FROM pg_catalog.pg_auth_members m
+		JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+		WHERE m.member = $1
+		ORDER BY r.rolname`
 
-	rows, err := r.DB.QueryContext(ctx, memberQuery)
+	rows, err := r.DB.QueryContext(ctx, memberQuery, oid)
 	if err != nil {
 		diags.AddError(
 			"Error reading role memberships",
@@ -505,13 +475,14 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 		return diags
 	}
 
-	if len(memberOfRoles) > 0 {
+	switch {
+	case len(memberOfRoles) > 0:
 		rolesList, listDiags := types.ListValue(types.StringType, memberOfRoles)
 		diags.Append(listDiags...)
 		model.Roles = rolesList
-	} else if !model.Roles.IsNull() {
+	case !model.Roles.IsNull():
 		model.Roles, _ = types.ListValue(types.StringType, []attr.Value{})
-	} else {
+	default:
 		model.Roles = types.ListNull(types.StringType)
 	}
 

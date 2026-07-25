@@ -22,7 +22,7 @@ func TestReadRole_NotFound(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	r := &resource.RoleResource{DB: mockDB}
@@ -53,7 +53,7 @@ func TestReadRole_QueryError(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection refused"))
 
 	r := &resource.RoleResource{DB: mockDB}
@@ -84,7 +84,7 @@ func TestReadRole_Success(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
 		*dest[0].(*int64) = 99
 		*dest[1].(*bool) = true
@@ -132,7 +132,7 @@ func TestReadUser_NotFound(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	r := &resource.UserResource{DB: mockDB}
@@ -163,7 +163,7 @@ func TestReadUser_QueryError(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection refused"))
 
 	r := &resource.UserResource{DB: mockDB}
@@ -194,7 +194,7 @@ func TestReadUser_MembershipQueryError(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
 		*dest[0].(*int64) = 42
 		*dest[1].(*bool) = true
@@ -238,7 +238,7 @@ func TestReadUser_Success(t *testing.T) {
 	mockScanner := mocks.NewMockScanner(ctrl)
 	mockRows := mocks.NewMockRows(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
 		*dest[0].(*int64) = 99
 		*dest[1].(*bool) = true
@@ -314,7 +314,7 @@ func TestReadUser_NullValidUntil(t *testing.T) {
 	mockScanner := mocks.NewMockScanner(ctrl)
 	mockRows := mocks.NewMockRows(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
 		*dest[0].(*int64) = 42
 		*dest[1].(*bool) = true
@@ -351,7 +351,7 @@ func TestReadUser_NoLoginWarning(t *testing.T) {
 	mockScanner := mocks.NewMockScanner(ctrl)
 	mockRows := mocks.NewMockRows(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(dest ...any) error {
 		*dest[0].(*int64) = 42
 		*dest[1].(*bool) = false // rolcanlogin = false
@@ -962,6 +962,42 @@ func TestReadPrivileges_Function_Success(t *testing.T) {
 	}
 	if len(privs) != 1 || privs[0] != "EXECUTE" {
 		t.Errorf("expected [EXECUTE], got %v", privs)
+	}
+}
+
+func TestReadPrivileges_Table_NoObjectsError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	r := &resource.GrantResource{DB: mockDB}
+	_, _, err := r.ReadPrivileges(context.Background(), "myrole", "table", "", "public", nil)
+	if err == nil {
+		t.Fatal("expected error when objects is empty for table grant")
+	}
+	if !strings.Contains(err.Error(), "requires at least one object name") {
+		t.Errorf("expected bounds-check error, got %q", err.Error())
+	}
+}
+
+func TestReadPrivileges_Sequence_NoObjectsError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	r := &resource.GrantResource{DB: mockDB}
+	_, _, err := r.ReadPrivileges(context.Background(), "myrole", "sequence", "", "public", []string{})
+	if err == nil {
+		t.Fatal("expected error when objects is empty for sequence grant")
+	}
+}
+
+func TestReadPrivileges_Function_NoObjectsError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+
+	r := &resource.GrantResource{DB: mockDB}
+	_, _, err := r.ReadPrivileges(context.Background(), "myrole", "function", "", "public", nil)
+	if err == nil {
+		t.Fatal("expected error when objects is empty for function grant")
 	}
 }
 

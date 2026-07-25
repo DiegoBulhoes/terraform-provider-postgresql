@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -116,14 +117,14 @@ func (p *PostgreSQLProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				},
 			},
 			"max_connections": schema.Int64Attribute{
-				Description: "Maximum number of open connections to the database. Default: 5.",
+				Description: "Maximum number of open connections to the database. Default: 10.",
 				Optional:    true,
 				Validators: []validator.Int64{
 					int64validator.AtLeast(1),
 				},
 			},
 			"max_idle_connections": schema.Int64Attribute{
-				Description: "Maximum number of idle connections in the pool. Default: 2.",
+				Description: "Maximum number of idle connections in the pool. Default: 5.",
 				Optional:    true,
 				Validators: []validator.Int64{
 					int64validator.AtLeast(0),
@@ -172,26 +173,31 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 	sslkey := EnvOrDefault(config.SSLKey, "PGSSLKEY", "")
 	sslrootcert := EnvOrDefault(config.SSLRootCert, "PGSSLROOTCERT", "")
 	connectTimeout := EnvOrDefaultInt(config.ConnectTimeout, "", 30)
-	maxOpenConns := EnvOrDefaultInt(config.MaxOpenConnections, "", 2)
-	maxIdleConns := EnvOrDefaultInt(config.MaxIdleConnections, "", 1)
+	maxOpenConns := EnvOrDefaultInt(config.MaxOpenConnections, "", 10)
+	maxIdleConns := EnvOrDefaultInt(config.MaxIdleConnections, "", 5)
 	connMaxLifetime := EnvOrDefaultInt(config.ConnMaxLifetime, "", 0)
 	connMaxIdleTime := EnvOrDefaultInt(config.ConnMaxIdleTime, "", 0)
-	_ = EnvOrDefaultBool(config.Superuser, "", true)
+	superuser := EnvOrDefaultBool(config.Superuser, "", true)
 
-	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=%d",
-		host, port, username, password, database, sslmode, connectTimeout,
-	)
-
+	params := []string{
+		"host=" + common.QuoteConnStringValue(host),
+		fmt.Sprintf("port=%d", port),
+		"user=" + common.QuoteConnStringValue(username),
+		"password=" + common.QuoteConnStringValue(password),
+		"dbname=" + common.QuoteConnStringValue(database),
+		"sslmode=" + common.QuoteConnStringValue(sslmode),
+		fmt.Sprintf("connect_timeout=%d", connectTimeout),
+	}
 	if sslcert != "" {
-		connStr += fmt.Sprintf(" sslcert=%s", sslcert)
+		params = append(params, "sslcert="+common.QuoteConnStringValue(sslcert))
 	}
 	if sslkey != "" {
-		connStr += fmt.Sprintf(" sslkey=%s", sslkey)
+		params = append(params, "sslkey="+common.QuoteConnStringValue(sslkey))
 	}
 	if sslrootcert != "" {
-		connStr += fmt.Sprintf(" sslrootcert=%s", sslrootcert)
+		params = append(params, "sslrootcert="+common.QuoteConnStringValue(sslrootcert))
 	}
+	connStr := strings.Join(params, " ")
 
 	tflog.Debug(ctx, "Connecting to PostgreSQL", map[string]interface{}{
 		"host":     host,
@@ -219,13 +225,14 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 	}
 	db.SetConnMaxIdleTime(time.Duration(idleTime) * time.Second)
 
-	err = db.PingContext(ctx)
-	if err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, time.Duration(connectTimeout)*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
 		resp.Diagnostics.AddError("Unable to connect to PostgreSQL", err.Error())
 		return
 	}
 
-	wrapper := common.NewDBWrapper(db)
+	wrapper := common.NewDBWrapperWithOptions(db, superuser)
 	resp.DataSourceData = wrapper
 	resp.ResourceData = wrapper
 }

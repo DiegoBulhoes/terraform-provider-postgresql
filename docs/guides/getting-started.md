@@ -24,7 +24,7 @@ terraform {
   required_providers {
     postgresql = {
       source  = "DiegoBulhoes/postgresql"
-      version = "~> 0.1"
+      version = "~> 0.2"
     }
   }
 }
@@ -60,7 +60,7 @@ provider "postgresql" {}
 
 ### Connection Tuning
 
-The provider supports several attributes for connection management:
+The provider supports several attributes for connection management. All time-based attributes are expressed in **seconds** (integer).
 
 ```terraform
 provider "postgresql" {
@@ -68,18 +68,27 @@ provider "postgresql" {
   username = "postgres"
   password = var.db_password
 
-  connect_timeout      = 30
-  max_connections      = 4
-  max_idle_connections  = 2
-  conn_max_lifetime    = "30m"
-  conn_max_idle_time   = "5m"
+  connect_timeout      = 30     # seconds to wait for the initial connection
+  max_connections      = 10     # default
+  max_idle_connections = 5      # default
+  conn_max_lifetime    = 1800   # seconds (0 = unlimited)
+  conn_max_idle_time   = 300    # seconds (0 = unlimited)
 }
 ```
 
-- `max_connections` -- Maximum number of open connections to the database.
-- `max_idle_connections` -- Maximum number of idle connections in the pool.
-- `conn_max_lifetime` -- Maximum amount of time a connection may be reused.
-- `conn_max_idle_time` -- Maximum amount of time a connection may sit idle before being closed.
+- `max_connections` -- Maximum number of open connections to the database. Default: `10`.
+- `max_idle_connections` -- Maximum number of idle connections in the pool. Default: `5`.
+- `conn_max_lifetime` -- Maximum lifetime of a connection in seconds. Connections older than this are closed before reuse. `0` means no limit. Default: `0`.
+- `conn_max_idle_time` -- Maximum time in seconds a connection can sit idle before being closed. `0` means no limit. Default: `0`.
+
+~> **Note:** For managed PostgreSQL services such as RDS, Cloud SQL, or Azure Database, set `superuser = false` so the provider skips operations that require superuser privileges:
+>
+> ```terraform
+> provider "postgresql" {
+>   # ...
+>   superuser = false
+> }
+> ```
 
 ### SSL Configuration
 
@@ -163,7 +172,7 @@ terraform {
   required_providers {
     postgresql = {
       source  = "DiegoBulhoes/postgresql"
-      version = "~> 0.1"
+      version = "~> 0.2"
     }
   }
 }

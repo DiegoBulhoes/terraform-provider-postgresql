@@ -11,6 +11,19 @@ Manages a PostgreSQL role as a permission group. Roles define a set of privilege
 
 ~> **Note:** Roles created with this resource always have `NOLOGIN`. Use `postgresql_user` for login users with passwords.
 
+## Inline `privilege` Blocks vs. Separate `postgresql_grant` Resources
+
+You can attach privileges to a role two ways:
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Inline `privilege { }` blocks (this resource) | Compact; privileges co-located with the role definition | No per-grant import; no `with_grant_option`; each change triggers a role-level update |
+| Separate `postgresql_grant` resources | Per-grant lifecycle (plan, apply, import, drift detect); supports `with_grant_option` | More verbose; grants live far from the role definition |
+
+Use inline blocks when the role's privileges are simple and change together. Use `postgresql_grant` when you want fine-grained management (especially for schema-level grants shared by many roles, or when delegation via `with_grant_option` is required).
+
+~> **Privilege validation.** Privilege keywords in `privilege.privileges` are validated against the same allowlist used by `postgresql_grant`. See the [grant resource docs](grant) for the complete list.
+
 ## Example Usage
 
 ```terraform
@@ -135,3 +148,5 @@ Roles can be imported using the role name:
 ```shell
 terraform import postgresql_role.readonly readonly
 ```
+
+Inline `privilege` blocks are **not** recovered by import — after importing, run `terraform plan` and expect the provider to re-apply whatever `privilege` blocks are declared in configuration.

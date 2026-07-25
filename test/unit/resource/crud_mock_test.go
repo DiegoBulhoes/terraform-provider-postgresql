@@ -83,18 +83,6 @@ func newImportReqResp(ctx context.Context, s rschema.Schema, id string) (fwresou
 	return req, resp
 }
 
-// hasDiagSummary checks whether resp diagnostics contain the given summary.
-func hasDiagSummary(diags interface {
-	Errors() []interface{ Summary() string }
-}, summary string) bool {
-	for _, d := range diags.Errors() {
-		if d.Summary() == summary {
-			return true
-		}
-	}
-	return false
-}
-
 // ---------------------------------------------------------------------------
 // databaseResource helpers
 // ---------------------------------------------------------------------------
@@ -641,7 +629,7 @@ func TestRoleResource_Read_notFound(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
@@ -665,7 +653,7 @@ func TestRoleResource_Read_queryError(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()
@@ -1304,6 +1292,63 @@ func grantStateValue(ctx context.Context, s rschema.Schema, id, role, database, 
 // grantResource tests
 // ---------------------------------------------------------------------------
 
+func TestGrantResource_Create_invalidPrivilegeRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	// No ExecContext expectation: allowlist must block the statement before
+	// reaching the database.
+
+	ctx := context.Background()
+	s := grantResourceSchema()
+	plan := grantPlanValue(ctx, s, "testrole", "testdb", "", "database", []string{"DROP DATABASE"}, false)
+	req, resp := newCreateReqResp(ctx, s, plan)
+
+	r := &resource.GrantResource{DB: mockDB}
+	r.Create(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected allowlist to reject invalid privilege")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid privileges" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'Invalid privileges' diagnostic, got %v", resp.Diagnostics.Errors())
+	}
+}
+
+func TestGrantResource_Update_invalidPrivilegeRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	// Revoke runs first; we let it succeed, then allowlist must block the grant.
+	mockDB.EXPECT().ExecContext(gomock.Any(), gomock.Any()).Return(mockResult{}, nil)
+
+	ctx := context.Background()
+	s := grantResourceSchema()
+	plan := grantPlanValue(ctx, s, "testrole", "testdb", "", "database", []string{"FOO"}, false)
+	state := grantStateValue(ctx, s, "testrole_database_testdb_", "testrole", "testdb", "", "database", []string{"CONNECT"}, false)
+	req, resp := newUpdateReqResp(ctx, s, plan, state)
+
+	r := &resource.GrantResource{DB: mockDB}
+	r.Update(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected allowlist to reject invalid privilege on update")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid privileges" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'Invalid privileges' diagnostic, got %v", resp.Diagnostics.Errors())
+	}
+}
+
 func TestGrantResource_Create_execError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDB := mocks.NewMockDBTX(ctrl)
@@ -1495,6 +1540,54 @@ func TestGrantResource_ImportState_invalidFormat(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected 'Invalid Import ID' diagnostic")
+	}
+}
+
+func TestGrantResource_ImportState_emptyString(t *testing.T) {
+	ctx := context.Background()
+	s := grantResourceSchema()
+	req, resp := newImportReqResp(ctx, s, "")
+
+	r := &resource.GrantResource{}
+	r.ImportState(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for empty import ID")
+	}
+}
+
+func TestGrantResource_ImportState_twoParts(t *testing.T) {
+	ctx := context.Background()
+	s := grantResourceSchema()
+	req, resp := newImportReqResp(ctx, s, "role/database")
+
+	r := &resource.GrantResource{}
+	r.ImportState(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for 2-part import ID")
+	}
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid Import ID" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'Invalid Import ID' diagnostic")
+	}
+}
+
+func TestGrantResource_ImportState_fiveParts(t *testing.T) {
+	ctx := context.Background()
+	s := grantResourceSchema()
+	req, resp := newImportReqResp(ctx, s, "role/database/db/schema/extra")
+
+	r := &resource.GrantResource{}
+	r.ImportState(ctx, req, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected error for 5-part import ID")
 	}
 }
 
@@ -1832,7 +1925,7 @@ func TestUserResource_Read_notFound(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(sql.ErrNoRows)
 
 	ctx := context.Background()
@@ -1856,7 +1949,7 @@ func TestUserResource_Read_queryError(t *testing.T) {
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScanner := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScanner)
+	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockScanner)
 	mockScanner.EXPECT().Scan(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("connection lost"))
 
 	ctx := context.Background()

@@ -349,3 +349,303 @@ type setVal struct{}
 
 func (s setVal) IsNull() bool    { return false }
 func (s setVal) IsUnknown() bool { return false }
+
+// ---------------------------------------------------------------------------
+// QuoteConnStringValue tests
+// ---------------------------------------------------------------------------
+
+func TestQuoteConnStringValue_simple(t *testing.T) {
+	got := common.QuoteConnStringValue("localhost")
+	if got != "'localhost'" {
+		t.Errorf("expected 'localhost', got %q", got)
+	}
+}
+
+func TestQuoteConnStringValue_empty(t *testing.T) {
+	got := common.QuoteConnStringValue("")
+	if got != "''" {
+		t.Errorf("expected '', got %q", got)
+	}
+}
+
+func TestQuoteConnStringValue_withSpace(t *testing.T) {
+	got := common.QuoteConnStringValue("a value")
+	if got != "'a value'" {
+		t.Errorf("expected 'a value', got %q", got)
+	}
+}
+
+func TestQuoteConnStringValue_withSingleQuote(t *testing.T) {
+	got := common.QuoteConnStringValue("pa'ss")
+	if got != `'pa\'ss'` {
+		t.Errorf(`expected 'pa\'ss', got %q`, got)
+	}
+}
+
+func TestQuoteConnStringValue_withBackslash(t *testing.T) {
+	got := common.QuoteConnStringValue(`foo\bar`)
+	if got != `'foo\\bar'` {
+		t.Errorf(`expected 'foo\\bar', got %q`, got)
+	}
+}
+
+func TestQuoteConnStringValue_withBackslashAndQuote(t *testing.T) {
+	// Backslash must be escaped before quote so we don't double-escape.
+	got := common.QuoteConnStringValue(`a\'b`)
+	if got != `'a\\\'b'` {
+		t.Errorf(`expected 'a\\\'b', got %q`, got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NormalizePrivileges tests
+// ---------------------------------------------------------------------------
+
+func TestNormalizePrivileges_uppercase(t *testing.T) {
+	got, err := common.NormalizePrivileges([]string{"select", "Insert", "UPDATE"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"SELECT", "INSERT", "UPDATE"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d privileges, got %d", len(want), len(got))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("index %d: expected %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+func TestNormalizePrivileges_dedup(t *testing.T) {
+	got, err := common.NormalizePrivileges([]string{"select", "SELECT", "Select"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "SELECT" {
+		t.Errorf("expected single SELECT, got %v", got)
+	}
+}
+
+func TestNormalizePrivileges_trim(t *testing.T) {
+	got, err := common.NormalizePrivileges([]string{"  select ", "\tINSERT\n"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 privileges, got %d", len(got))
+	}
+}
+
+func TestNormalizePrivileges_skipEmpty(t *testing.T) {
+	got, err := common.NormalizePrivileges([]string{"", "SELECT", "   "})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "SELECT" {
+		t.Errorf("expected single SELECT, got %v", got)
+	}
+}
+
+func TestNormalizePrivileges_invalidRejected(t *testing.T) {
+	_, err := common.NormalizePrivileges([]string{"SELECT", "DROP DATABASE"})
+	if err == nil {
+		t.Fatal("expected error for invalid privilege")
+	}
+	if !contains(err.Error(), "DROP DATABASE") {
+		t.Errorf("expected error to mention invalid privilege, got %q", err.Error())
+	}
+}
+
+func TestNormalizePrivileges_allValid(t *testing.T) {
+	valid := []string{"ALL", "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE",
+		"REFERENCES", "TRIGGER", "USAGE", "CREATE", "CONNECT", "TEMPORARY", "TEMP", "EXECUTE"}
+	got, err := common.NormalizePrivileges(valid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != len(valid) {
+		t.Errorf("expected %d privileges, got %d", len(valid), len(got))
+	}
+}
+
+func TestNormalizePrivileges_empty(t *testing.T) {
+	got, err := common.NormalizePrivileges(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %v", got)
+	}
+}
+
+func TestNormalizePrivileges_multipleInvalid(t *testing.T) {
+	_, err := common.NormalizePrivileges([]string{"FOO", "BAR", "SELECT"})
+	if err == nil {
+		t.Fatal("expected error for invalid privileges")
+	}
+	// Bad names are alphabetized in the error message.
+	if !contains(err.Error(), "BAR") || !contains(err.Error(), "FOO") {
+		t.Errorf("expected error to list both invalid privileges, got %q", err.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BuildRoleOptions tests
+// ---------------------------------------------------------------------------
+
+func TestBuildRoleOptions_minimalRole(t *testing.T) {
+	noLogin := false
+	got := common.BuildRoleOptions(common.RoleOptions{
+		Login:           &noLogin,
+		ConnectionLimit: -1,
+	})
+	wants := []string{"NOLOGIN", "NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "CONNECTION LIMIT -1"}
+	for _, w := range wants {
+		if !contains(got, w) {
+			t.Errorf("expected %q in %q", w, got)
+		}
+	}
+	if !startsWith(got, " WITH ") {
+		t.Errorf("expected leading ' WITH ' in %q", got)
+	}
+}
+
+func TestBuildRoleOptions_loginUserWithPassword(t *testing.T) {
+	got := common.BuildRoleOptions(common.RoleOptions{
+		Superuser:       true,
+		ConnectionLimit: 20,
+		Password:        "hunter2",
+	})
+	if contains(got, "LOGIN") || contains(got, "NOLOGIN") {
+		t.Errorf("expected neither LOGIN nor NOLOGIN when Login=nil, got %q", got)
+	}
+	if !contains(got, "SUPERUSER") {
+		t.Errorf("expected SUPERUSER in %q", got)
+	}
+	if !contains(got, "PASSWORD 'hunter2'") {
+		t.Errorf("expected quoted password in %q", got)
+	}
+	if !contains(got, "CONNECTION LIMIT 20") {
+		t.Errorf("expected CONNECTION LIMIT 20 in %q", got)
+	}
+}
+
+func TestBuildRoleOptions_passwordQuoted(t *testing.T) {
+	// Single-quote must be escaped in the password.
+	got := common.BuildRoleOptions(common.RoleOptions{
+		Password: "it's",
+	})
+	if !contains(got, "PASSWORD 'it''s'") {
+		t.Errorf("expected escaped single-quote in password, got %q", got)
+	}
+}
+
+func TestBuildRoleOptions_validUntil(t *testing.T) {
+	got := common.BuildRoleOptions(common.RoleOptions{
+		ValidUntil: "2030-01-01",
+	})
+	if !contains(got, "VALID UNTIL '2030-01-01'") {
+		t.Errorf("expected VALID UNTIL clause, got %q", got)
+	}
+}
+
+func TestBuildRoleOptions_explicitLogin(t *testing.T) {
+	login := true
+	got := common.BuildRoleOptions(common.RoleOptions{
+		Login: &login,
+	})
+	if !contains(got, "LOGIN") || contains(got, "NOLOGIN") {
+		t.Errorf("expected LOGIN (not NOLOGIN) in %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LogRollback tests
+// ---------------------------------------------------------------------------
+
+type fakeTx struct {
+	rollbackErr error
+	calls       int
+}
+
+func (f *fakeTx) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
+	return nil, nil
+}
+func (f *fakeTx) QueryContext(_ context.Context, _ string, _ ...any) (common.Rows, error) {
+	return nil, nil
+}
+func (f *fakeTx) Commit() error { return nil }
+func (f *fakeTx) Rollback() error {
+	f.calls++
+	return f.rollbackErr
+}
+
+func TestLogRollback_success(t *testing.T) {
+	tx := &fakeTx{rollbackErr: nil}
+	common.LogRollback(context.Background(), tx)
+	if tx.calls != 1 {
+		t.Errorf("expected 1 rollback call, got %d", tx.calls)
+	}
+}
+
+func TestLogRollback_alreadyCommitted(t *testing.T) {
+	// sql.ErrTxDone must not be logged or escalated — benign.
+	tx := &fakeTx{rollbackErr: sql.ErrTxDone}
+	common.LogRollback(context.Background(), tx)
+	if tx.calls != 1 {
+		t.Errorf("expected 1 rollback call, got %d", tx.calls)
+	}
+}
+
+func TestLogRollback_genericError(t *testing.T) {
+	// Non-ErrTxDone errors are logged via tflog (no panic, no propagation).
+	tx := &fakeTx{rollbackErr: errors.New("connection dropped")}
+	common.LogRollback(context.Background(), tx)
+	if tx.calls != 1 {
+		t.Errorf("expected 1 rollback call, got %d", tx.calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewDBWrapperWithOptions tests
+// ---------------------------------------------------------------------------
+
+func TestNewDBWrapperWithOptions_storesSuperuser(t *testing.T) {
+	w := common.NewDBWrapperWithOptions(&sql.DB{}, false)
+	if w.Superuser {
+		t.Error("expected Superuser=false")
+	}
+	w2 := common.NewDBWrapperWithOptions(&sql.DB{}, true)
+	if !w2.Superuser {
+		t.Error("expected Superuser=true")
+	}
+}
+
+func TestNewDBWrapper_defaultsSuperuserTrue(t *testing.T) {
+	w := common.NewDBWrapper(&sql.DB{})
+	if !w.Superuser {
+		t.Error("expected default Superuser=true for backward compat")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+func contains(s, sub string) bool {
+	return len(sub) == 0 || indexOf(s, sub) >= 0
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}

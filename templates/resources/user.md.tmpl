@@ -11,7 +11,22 @@ Manages a PostgreSQL user. A user is a role with `LOGIN` privilege, allowing it 
 
 Use `postgresql_role` to define permission groups, then assign them to users via the `roles` attribute.
 
-~> **Note:** The `password` attribute cannot be read back from PostgreSQL. After importing a user, the password will not be present in state and will show as changed on the next plan.
+~> **Password handling.** The `password` attribute is `Sensitive` and is stored in Terraform state. Use a state backend with encryption at rest (e.g. S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud) and restrict read access. The password **cannot be read back from PostgreSQL** — after importing a user, the password will not be present in state and will show as changed on the next plan.
+
+## `valid_until` Format
+
+The `valid_until` attribute sets a password expiration timestamp. Accepted formats (validated at plan time):
+
+- RFC 3339 with `T` separator: `"2025-12-31T23:59:59Z"`
+- RFC 3339 with timezone offset: `"2025-12-31T23:59:59-03:00"`
+- SQL timestamp with space separator: `"2025-12-31 23:59:59"`
+- Unset / `null` — password never expires (PostgreSQL `infinity`)
+
+The value is sent to PostgreSQL via `VALID UNTIL <quoted>` and interpreted by the server's timestamp parser. Mismatched formats will surface as a server error during apply.
+
+## Role Memberships
+
+The `roles` attribute grants the user membership in each listed role. On update, the provider computes a diff and issues the minimum `GRANT ... TO` / `REVOKE ... FROM` statements; duplicates are deduplicated. Changing the list does **not** drop and recreate the user.
 
 ## Example Usage
 
@@ -26,3 +41,5 @@ Users can be imported using the user name:
 ```shell
 terraform import postgresql_user.developer developer
 ```
+
+After import, the `password` field will be empty in state. Re-declare it in configuration so the next `terraform apply` sets it on the server.

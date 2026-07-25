@@ -11,6 +11,51 @@ Executes a read-only SQL query and returns the results. This data source is usef
 
 ~> **Security:** By default, this data source only allows `SELECT` queries (including CTEs with `WITH`). Queries that attempt DML (`INSERT`, `UPDATE`, `DELETE`) or DDL (`CREATE`, `DROP`, `ALTER`) are **rejected**. All queries run inside a **read-only transaction**, so even if a query bypasses the prefix check, PostgreSQL itself will block any write operation. To allow destructive queries, you must explicitly set `allow_destructive = true`.
 
+## Result Format
+
+Every row is returned as a `map[string] -> string` under the `rows` attribute. Numeric, timestamp, boolean, and `NULL` columns are all rendered via PostgreSQL's default text representation; parse them in Terraform expressions (`tonumber`, `toset`, etc.) as needed.
+
+```terraform
+# Access a single column:
+value = data.postgresql_query.example.rows[0]["column_name"]
+
+# Coerce a numeric column:
+count = tonumber(data.postgresql_query.example.rows[0]["total"])
+
+# Extract a list of values:
+names = [for r in data.postgresql_query.example.rows : r["name"]]
+```
+
+## Common Usage Patterns
+
+### Query catalog tables
+
+```terraform
+data "postgresql_query" "database_size" {
+  database = "postgres"
+  query    = "SELECT pg_size_pretty(pg_database_size('myapp')) AS size"
+}
+
+output "db_size" {
+  value = data.postgresql_query.database_size.rows[0]["size"]
+}
+```
+
+### Run an idempotent hardening script (destructive)
+
+```terraform
+data "postgresql_query" "revoke_public" {
+  database          = "myapp"
+  allow_destructive = true
+  query             = <<-SQL
+    REVOKE CONNECT ON DATABASE myapp FROM PUBLIC;
+    REVOKE CREATE  ON SCHEMA   public FROM PUBLIC;
+  SQL
+}
+```
+
+~> **`allow_destructive = true` runs in a writable transaction.** Any statement that would fail outside a transaction (e.g. `CREATE DATABASE`, `VACUUM`) will also fail here. For those, connect outside Terraform.
+
 ## Example Usage
 
 ```terraform

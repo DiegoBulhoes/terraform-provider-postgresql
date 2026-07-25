@@ -2,7 +2,7 @@ version: "2"
 
 run:
   timeout: 5m
-  tests: false
+  tests: true
 
 linters:
   enable:
@@ -12,3 +12,27 @@ linters:
     - staticcheck
     - unused
     - misspell
+    - gosec
+    - gocritic
+    - unparam
+  settings:
+    gosec:
+      excludes:
+        # G115 flags integer conversions; our Int64→int conversions read
+        # Terraform-validated values with explicit range validators.
+        - G115
+  exclusions:
+    rules:
+      # Test fixtures legitimately exercise error paths and hard-code
+      # values; keep the main lint signal on production code.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - gocritic
+          - unparam
+      - path: test/mocks/
+        linters:
+          - gocritic
+          - staticcheck
+          - unused

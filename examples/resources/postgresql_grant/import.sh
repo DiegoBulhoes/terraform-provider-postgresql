@@ -1,5 +1,8 @@
-# Import database grant: role/object_type/database/
-terraform import postgresql_grant.db_connect "app_user/database/my_application/"
+# Database-level grant: role/object_type/database (3 parts, no schema)
+terraform import postgresql_grant.db_connect "app_user/database/my_application"
 
-# Import schema grant: role/object_type/database/schema
-terraform import postgresql_grant.schema_usage "app_user/schema//app_schema"
+# Schema-level grant: role/object_type/database/schema (4 parts)
+terraform import postgresql_grant.schema_usage "app_user/schema/my_application/app_schema"
+
+# Object-level grant (tables, sequences, functions): same 4-part format
+terraform import postgresql_grant.tables "app_user/table/my_application/public"

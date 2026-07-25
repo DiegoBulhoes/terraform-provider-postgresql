@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -151,7 +150,7 @@ func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	createTimeout, d := plan.Timeouts.Create(ctx, 5*time.Minute)
+	createTimeout, d := plan.Timeouts.Create(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -165,7 +164,11 @@ func (r *GrantResource) Create(ctx context.Context, req resource.CreateRequest, 
 	schemaName := plan.Schema.ValueString()
 	withGrantOption := plan.WithGrantOption.ValueBool()
 
-	privileges := common.StringSetToSlice(ctx, plan.Privileges)
+	privileges, err := common.NormalizePrivileges(common.StringSetToSlice(ctx, plan.Privileges))
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid privileges", err.Error())
+		return
+	}
 	objects := common.StringListToSlice(ctx, plan.Objects)
 	privList := strings.Join(privileges, ", ")
 
@@ -245,6 +248,11 @@ func (r *GrantResource) Read(ctx context.Context, req resource.ReadRequest, resp
 func (r *GrantResource) ReadPrivileges(ctx context.Context, role, objectType, database, schemaName string, objects []string) ([]string, bool, error) {
 	var query string
 	var args []interface{}
+
+	needsObject := objectType == "table" || objectType == "sequence" || objectType == "function"
+	if needsObject && len(objects) == 0 {
+		return nil, false, fmt.Errorf("drift detection for %s grants requires at least one object name", objectType)
+	}
 
 	switch objectType {
 	case "database":
@@ -373,7 +381,7 @@ func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	updateTimeout, d := plan.Timeouts.Update(ctx, 5*time.Minute)
+	updateTimeout, d := plan.Timeouts.Update(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -400,7 +408,11 @@ func (r *GrantResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	// Grant new privileges.
-	privileges := common.StringSetToSlice(ctx, plan.Privileges)
+	privileges, err := common.NormalizePrivileges(common.StringSetToSlice(ctx, plan.Privileges))
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid privileges", err.Error())
+		return
+	}
 	privList := strings.Join(privileges, ", ")
 
 	var grantOptionClause string
@@ -429,7 +441,7 @@ func (r *GrantResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	deleteTimeout, d := state.Timeouts.Delete(ctx, 5*time.Minute)
+	deleteTimeout, d := state.Timeouts.Delete(ctx, common.DefaultTimeout)
 	resp.Diagnostics.Append(d...)
 	if resp.Diagnostics.HasError() {
 		return
