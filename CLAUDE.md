@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Terraform provider for PostgreSQL built with `terraform-plugin-framework`. Manages roles, users, databases, schemas, and grants.
+Terraform provider for PostgreSQL, built with `terraform-plugin-framework`. It manages roles, users, databases, schemas, and grants.
 
 ## Quick Commands
 
@@ -45,8 +45,8 @@ test/
 
 ## Testing Conventions
 
-- **Unit tests** (`test/unit/`): Use `go.uber.org/mock` (GoMock). External test packages (`_test` suffix).
-- **Acceptance tests** (`test/integration/`): Guarded by `//go:build integration` tag. Use `testcontainers-go` to spin up real PostgreSQL containers.
+- **Unit tests** (`test/unit/`): use `go.uber.org/mock` (GoMock) in external test packages, with the `_test` suffix.
+- **Acceptance tests** (`test/integration/`): guarded by the `//go:build integration` tag. They use `testcontainers-go` to start real PostgreSQL containers.
 - Tests run against PostgreSQL 14, 15, 16, 17.
 - Mocks generated in `test/mocks/mock_db.go`.
 - Mock generation: `mockgen -destination=test/mocks/mock_db.go -package=mocks github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common DBTX,Scanner,Rows,Tx`
@@ -54,11 +54,11 @@ test/
 ## Code Style
 
 - Go 1.26+ with `terraform-plugin-framework` patterns (not the older SDKv2).
-- Database access through the `common.DBTX` interface for testability.
-- Resource and datasource types are exported (e.g., `RoleResource`, `DatabaseDataSource`) for external test packages.
+- Database access goes through the `common.DBTX` interface, so it can be mocked.
+- Resource and data source types are exported, such as `RoleResource` and `DatabaseDataSource`, so external test packages can reach them.
 - Linter config: `.golangci.yml` (errcheck, govet, ineffassign, staticcheck, unused, misspell).
 - PostgreSQL driver: `github.com/lib/pq`.
 
 ## Documentation
 
-- **Do not edit** files in `docs/` directly; edit templates in `templates/` and examples in `examples/`, then run `make docs`.
+- **Do not edit** files in `docs/`. Edit the templates in `templates/` and the examples in `examples/`, then run `make docs`.
