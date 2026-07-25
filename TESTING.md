@@ -33,7 +33,7 @@ All Go tooling (`golangci-lint`, `goimports`, `tfplugindocs`, `govulncheck`)
 is declared in `go.mod` and resolved via `go tool` / the Make targets —
 nothing to install manually. `make ci-vuln` will install `govulncheck` into
 `$GOBIN` on first use if it isn't already present
-(`Makefile:82-87`).
+(`Makefile:84-89`).
 
 ## Test Layout
 
@@ -79,7 +79,7 @@ go test -run TestReadRole ./test/unit/...  # a single test
 ```
 
 `make ci-unit` writes `coverage-unit.out` and prints the total at the end.
-Target definition: `Makefile:89-92`.
+Target definition: `Makefile:92-94`.
 
 ### Acceptance Tests (Docker + PostgreSQL)
 
@@ -98,7 +98,7 @@ POSTGRES_IMAGE=postgres:17-alpine TF_ACC=1 \
 
 `make ci-acceptance` iterates over `$(PG_VERSIONS)` (default `14 15 16 17`,
 `Makefile:5`) and stops at the first failing version via
-`|| exit 1` (`Makefile:102-110`).
+`|| exit 1` (`Makefile:103-110`).
 
 ### Everything (the full `make all` pipeline)
 
@@ -130,19 +130,46 @@ On success you'll see:
 
 | `make` target      | CI step in `.github/workflows/test.yml`               | Modifies files? |
 |--------------------|-------------------------------------------------------|-----------------|
-| `ci-vet`           | `go vet ./...` (`test.yml:22-23`)                     | no |
-| `ci-fmt-check`     | `gofmt -l .` + fail-if-nonempty (`test.yml:25-28`)    | no |
-| `ci-lint`          | `golangci-lint run ./...` (`test.yml:30-31`)          | no |
-| `ci-docs`          | `tfplugindocs validate` (`test.yml:33-34`)            | no |
-| `ci-vuln`          | install + run `govulncheck` (`test.yml:36-40`)        | no |
-| `ci-unit`          | `go test -race -coverpkg ./test/unit/...` (`test.yml:53-54`) | writes `coverage-unit.out` |
+| `ci-vet`           | `go vet ./...` (`test.yml:28-29`)                     | no |
+| `ci-fmt-check`     | `gofmt -l .` + fail-if-nonempty (`test.yml:31-34`)    | no |
+| `ci-lint`          | `golangci-lint run ./...` (`test.yml:36-37`)          | no |
+| `ci-docs`          | `tfplugindocs validate` (`test.yml:39-40`)            | no |
+| `ci-vuln`          | install + run `govulncheck` (`test.yml:42-46`)        | no |
+| `ci-unit`          | `go test -race -coverpkg ./test/unit/...` (`test.yml:59-60`) | writes `coverage-unit.out` |
 | `ci`               | all of the above in sequence                          | no source changes |
-| `ci-acceptance`    | `acceptance` job matrix (`test.yml:56-79`)            | — |
+| `ci-acceptance`    | `acceptance` job matrix (`test.yml:62-96`)            | — |
 
 The lint+format check is **non-modifying** — unlike `make lint`, which
 runs `go fmt` first. If you want CI-style behavior (fail fast on
 unformatted code) use `make ci-fmt-check`. If you want to actually
 format the code use `make fmt`.
+
+### Selecting PostgreSQL Versions in CI
+
+Both workflows take an optional `pg_versions` input on
+`workflow_dispatch`, so the acceptance matrix is built at runtime instead
+of being hardcoded:
+
+```yaml
+postgres_version: ${{ fromJSON(github.event.inputs.pg_versions || '["14","15","16","17"]') }}
+```
+
+- **Pull requests** get the full `14 15 16 17` matrix (the input is
+  absent, so the fallback applies).
+- **Manual runs** (Actions → *Tests* / *Release* → *Run workflow*) accept
+  a JSON array — e.g. `["16","17"]` for a quick two-version run. It must
+  be valid JSON, otherwise `fromJSON` fails before the matrix expands.
+
+The `run-name` reflects the choice, so a manual run shows up as
+`Tests - my-branch (PG ["16","17"])` in the Actions list.
+
+This is the CI equivalent of `make ci-acceptance PG_VERSIONS="16 17"`
+locally. Note the two are **not** wired to the same source: the Makefile
+default lives in `Makefile:5` and the workflow default in the `fromJSON`
+fallback above — when you add a PostgreSQL version, update both.
+
+Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`
+(`test.yml:91`), so a manual run that excludes `17` uploads no coverage.
 
 ### Reproducing a CI Failure Locally
 
@@ -171,7 +198,7 @@ make ci-docs            # re-validate
 |-------------------------|--------------------------|-------------|
 | `TF_ACC`                | —                        | Required for acceptance tests to actually run (Terraform SDK convention). The Makefile sets this automatically. |
 | `PG_VERSIONS`           | `14 15 16 17`            | PostgreSQL versions to test (matrix variable; `Makefile:5`). |
-| `POSTGRES_IMAGE`        | `postgres:<v>-alpine`    | Container image override (`Makefile:42,105`). |
+| `POSTGRES_IMAGE`        | `postgres:<v>-alpine`    | Container image override (`Makefile:42,106`). |
 | `TF_ACC_TERRAFORM_PATH` | `$(which terraform)`     | Path to the Terraform binary the SDK invokes. |
 | `PGHOST`                | (testcontainer)          | If set, acceptance tests skip the container and use an external DB. |
 | `PGPORT`                | (testcontainer)          | Port override when `PGHOST` is set. |
@@ -211,7 +238,7 @@ start Docker and retry.
 **`govulncheck` reports stdlib CVEs** — these are fixed in newer Go
 patch releases. The fix is to bump the version in `go.mod:3` (the CI
 runner reads it via `setup-go@v6 with: go-version-file: go.mod`,
-`test.yml:18-20`); your local Go ≥ 1.21 will auto-fetch the required
+`test.yml:24-26`); your local Go ≥ 1.21 will auto-fetch the required
 toolchain.
 
 **`tfplugindocs validate` fails after editing templates** — regenerate:
