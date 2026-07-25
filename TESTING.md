@@ -20,7 +20,7 @@ how to reproduce the CI pipeline before pushing.
 
 ## Prerequisites
 
-- **Go** ≥ 1.26.2 (the toolchain pinned in `go.mod` —
+- **Go** ≥ 1.26.5 (the toolchain pinned in `go.mod` —
   `GOTOOLCHAIN=auto`, the default since Go 1.21, will auto-fetch it if your
   system has an older version).
 - **Docker** (acceptance tests spin up a PostgreSQL container via
