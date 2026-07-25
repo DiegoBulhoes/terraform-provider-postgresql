@@ -78,6 +78,13 @@ jobs:
       - name: Run golangci-lint
         run: go tool golangci-lint run ./...
 
+      # tfplugindocs exports the provider schema through Terraform. Without a
+      # binary on PATH it downloads one via hc-install, which currently fails
+      # PGP verification ("openpgp: key expired").
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
       - name: Validate documentation
         run: go tool tfplugindocs validate
 

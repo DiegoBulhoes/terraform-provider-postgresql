@@ -20,7 +20,7 @@ how to reproduce the CI pipeline before pushing.
 
 ## Prerequisites
 
-- **Go** ≥ 1.26.2 (the toolchain pinned in `go.mod:3` —
+- **Go** ≥ 1.26.2 (the toolchain pinned in `go.mod` —
   `GOTOOLCHAIN=auto`, the default since Go 1.21, will auto-fetch it if your
   system has an older version).
 - **Docker** (acceptance tests spin up a PostgreSQL container via
@@ -32,8 +32,7 @@ how to reproduce the CI pipeline before pushing.
 All Go tooling (`golangci-lint`, `goimports`, `tfplugindocs`, `govulncheck`)
 is declared in `go.mod` and resolved via `go tool` / the Make targets —
 nothing to install manually. `make ci-vuln` will install `govulncheck` into
-`$GOBIN` on first use if it isn't already present
-(`Makefile:84-89`).
+`$GOBIN` on first use if it isn't already present.
 
 ## Test Layout
 
@@ -79,7 +78,6 @@ go test -run TestReadRole ./test/unit/...  # a single test
 ```
 
 `make ci-unit` writes `coverage-unit.out` and prints the total at the end.
-Target definition: `Makefile:92-94`.
 
 ### Acceptance Tests (Docker + PostgreSQL)
 
@@ -96,9 +94,8 @@ POSTGRES_IMAGE=postgres:17-alpine TF_ACC=1 \
   go test -tags integration -timeout 600s -count=1 ./test/integration/...
 ```
 
-`make ci-acceptance` iterates over `$(PG_VERSIONS)` (default `14 15 16 17`,
-`Makefile:5`) and stops at the first failing version via
-`|| exit 1` (`Makefile:103-110`).
+`make ci-acceptance` iterates over `$(PG_VERSIONS)` (default `14 15 16 17`)
+and stops at the first failing version via `|| exit 1`.
 
 ### Everything (the full `make all` pipeline)
 
@@ -106,7 +103,7 @@ POSTGRES_IMAGE=postgres:17-alpine TF_ACC=1 \
 make all   # tidy → lint → security → test → build → docs
 ```
 
-Note: `make test` (`Makefile:37-47`) runs both unit **and** the full
+Note: `make test` runs both unit **and** the full
 acceptance matrix — it requires Docker + Terraform. If you just want the
 fast feedback loop, prefer `make ci` (unit-only) or `make ci-unit`.
 
@@ -128,16 +125,16 @@ On success you'll see:
 
 ### Target Map
 
-| `make` target      | CI step in `.github/workflows/test.yml`               | Modifies files? |
-|--------------------|-------------------------------------------------------|-----------------|
-| `ci-vet`           | `go vet ./...` (`test.yml:70-71`)                     | no |
-| `ci-fmt-check`     | `gofmt -l .` + fail-if-nonempty (`test.yml:73-76`)    | no |
-| `ci-lint`          | `golangci-lint run ./...` (`test.yml:78-79`)          | no |
-| `ci-docs`          | `tfplugindocs validate` (`test.yml:81-82`)            | no |
-| `ci-vuln`          | install + run `govulncheck` (`test.yml:84-88`)        | no |
-| `ci-unit`          | `go test -race -coverpkg ./test/unit/...` (`test.yml:101-102`) | writes `coverage-unit.out` |
-| `ci`               | all of the above in sequence                          | no source changes |
-| `ci-acceptance`    | `acceptance` job matrix (`test.yml:104-138`)          | — |
+| `make` target   | CI step in `.github/workflows/test.yml`        | Modifies files? |
+|-----------------|------------------------------------------------|-----------------|
+| `ci-vet`        | `Run go vet` step                              | no |
+| `ci-fmt-check`  | `Check formatting` step                        | no |
+| `ci-lint`       | `Run golangci-lint` step                       | no |
+| `ci-docs`       | `Validate documentation` step                  | no |
+| `ci-vuln`       | `Install govulncheck` + `Run govulncheck`      | no |
+| `ci-unit`       | `unit` job                                     | writes `coverage-unit.out` |
+| `ci`            | all of the above in sequence                   | no source changes |
+| `ci-acceptance` | `acceptance` job matrix                        | — |
 
 The lint+format check is **non-modifying** — unlike `make lint`, which
 runs `go fmt` first. If you want CI-style behavior (fail fast on
@@ -166,18 +163,18 @@ Run workflow ▾
   `select at least one PostgreSQL version` instead of silently producing
   an empty matrix (which GitHub would report as a skipped job).
 
-The job emitting the matrix is `resolve-matrix` in `test.yml:30-58`; in
+The job emitting the matrix is `resolve-matrix` in `test.yml`; in
 `release.yml` the same logic lives in the `version` job so the release
 path doesn't pay for an extra runner. Both write the resolved list to the
 run's Step Summary.
 
 This is the CI equivalent of `make ci-acceptance PG_VERSIONS="16 17"`
 locally. Note the two are **not** wired to the same source: the Makefile
-default lives in `Makefile:5` and the workflow default in the checkbox
+default lives in `PG_VERSIONS` and the workflow default in the checkbox
 list — when you add a PostgreSQL version, update both.
 
-Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`
-(`test.yml:133`), so a manual run that unchecks `17` uploads no coverage.
+Caveat: the Codecov upload is gated on `matrix.postgres_version == '17'`,
+so a manual run that unchecks `17` uploads no coverage.
 
 ### Reproducing a CI Failure Locally
 
@@ -205,8 +202,8 @@ make ci-docs            # re-validate
 | Variable                | Default                  | Description |
 |-------------------------|--------------------------|-------------|
 | `TF_ACC`                | —                        | Required for acceptance tests to actually run (Terraform SDK convention). The Makefile sets this automatically. |
-| `PG_VERSIONS`           | `14 15 16 17`            | PostgreSQL versions to test (matrix variable; `Makefile:5`). |
-| `POSTGRES_IMAGE`        | `postgres:<v>-alpine`    | Container image override (`Makefile:42,106`). |
+| `PG_VERSIONS`           | `14 15 16 17`            | PostgreSQL versions to test (Makefile matrix variable). |
+| `POSTGRES_IMAGE`        | `postgres:<v>-alpine`    | Container image override. |
 | `TF_ACC_TERRAFORM_PATH` | `$(which terraform)`     | Path to the Terraform binary the SDK invokes. |
 | `PGHOST`                | (testcontainer)          | If set, acceptance tests skip the container and use an external DB. |
 | `PGPORT`                | (testcontainer)          | Port override when `PGHOST` is set. |
@@ -214,7 +211,7 @@ make ci-docs            # re-validate
 | `PGPASSWORD`            | `postgres`               | Password for the external DB case. |
 | `PGDATABASE`            | `postgres`               | Default database. |
 | `PGSSLMODE`             | `disable`                | SSL mode for the external DB case. |
-| `GOTOOLCHAIN`           | `auto`                   | Go ≥ 1.21 auto-fetches the toolchain declared in `go.mod:3`. Set to `local` to disable. |
+| `GOTOOLCHAIN`           | `auto`                   | Go ≥ 1.21 auto-fetches the toolchain declared in `go.mod`. Set to `local` to disable. |
 
 ## How Acceptance Tests Work
 
@@ -244,12 +241,22 @@ own pool.
 start Docker and retry.
 
 **`govulncheck` reports stdlib CVEs** — these are fixed in newer Go
-patch releases. The fix is to bump the version in `go.mod:3` (the CI
-runner reads it via `setup-go@v6 with: go-version-file: go.mod`,
-`test.yml:66-68`); your local Go ≥ 1.21 will auto-fetch the required
-toolchain.
+patch releases. The fix is to bump the version in `go.mod` (the CI
+runner reads it via `setup-go@v6 with: go-version-file: go.mod`); your
+local Go ≥ 1.21 will auto-fetch the required toolchain.
 
 **`tfplugindocs validate` fails after editing templates** — regenerate:
-`make docs` (`Makefile:51-53`), then commit the regenerated `docs/`.
+`make docs`, then commit the regenerated `docs/`.
 Do **not** hand-edit files in `docs/` — they will be overwritten by the
-next `make docs` run (see `CLAUDE.md:64`).
+next `make docs` run (see `CLAUDE.md`).
+
+**`tfplugindocs` fails with `openpgp: key expired`** — the full message is
+`unable to download Terraform binary: unable to verify checksums
+signature`. `tfplugindocs` needs Terraform to export the provider schema;
+when no binary is on `PATH` it downloads one through `hc-install`, whose
+PGP verification fails against HashiCorp's expired signing key. The fix is
+to provide the binary instead of letting it download one — CI does this
+with `hashicorp/setup-terraform@v4` right before the validate step.
+Locally this never reproduces as long as `terraform`
+is on your `PATH`, which is also why `make ci-docs` can pass while CI
+fails.
