@@ -49,6 +49,8 @@ type DatabaseResourceModel struct {
 	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
 
+const defaultTablespace = "pg_default"
+
 func NewDatabaseResource() resource.Resource {
 	return &DatabaseResource{}
 }
@@ -120,7 +122,7 @@ func (r *DatabaseResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 				Description: "The name of the tablespace that will be associated with the new database.",
 				Optional:    true,
 				Computed:    true,
-				Default:     stringdefault.StaticString("pg_default"),
+				Default:     stringdefault.StaticString(defaultTablespace),
 			},
 			"connection_limit": schema.Int64Attribute{
 				Description: "How many concurrent connections can be made to this database. -1 means no limit.",
@@ -209,7 +211,7 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 		opts = append(opts, fmt.Sprintf("LC_CTYPE = %s", pq.QuoteLiteral(plan.LcCtype.ValueString())))
 	}
 
-	if common.IsSet(plan.TablespaceName) {
+	if common.IsSet(plan.TablespaceName) && plan.TablespaceName.ValueString() != defaultTablespace {
 		opts = append(opts, fmt.Sprintf("TABLESPACE = %s", pq.QuoteIdentifier(plan.TablespaceName.ValueString())))
 	}
 
