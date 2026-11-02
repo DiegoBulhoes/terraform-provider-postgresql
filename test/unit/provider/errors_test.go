@@ -35,7 +35,6 @@ func buildProviderConfigTimeout(host string, port int, connectTimeout int) tftyp
 			"max_idle_connections": tftypes.Number,
 			"conn_max_lifetime":    tftypes.Number,
 			"conn_max_idle_time":   tftypes.Number,
-			"superuser":            tftypes.Bool,
 			"expected_version":     tftypes.String,
 		},
 	}, map[string]tftypes.Value{
@@ -53,7 +52,6 @@ func buildProviderConfigTimeout(host string, port int, connectTimeout int) tftyp
 		"max_idle_connections": tftypes.NewValue(tftypes.Number, nil),
 		"conn_max_lifetime":    tftypes.NewValue(tftypes.Number, nil),
 		"conn_max_idle_time":   tftypes.NewValue(tftypes.Number, nil),
-		"superuser":            tftypes.NewValue(tftypes.Bool, nil),
 		"expected_version":     tftypes.NewValue(tftypes.String, nil),
 	})
 }
@@ -130,5 +128,53 @@ func TestProvider_Configure_canceledContext(t *testing.T) {
 	}
 	if resp.ResourceData != nil {
 		t.Error("provider data must stay nil when the ping fails")
+	}
+}
+
+// An invalid PGPORT must be reported, not silently replaced by 5432.
+func TestProvider_Configure_invalidPGPORT(t *testing.T) {
+	t.Setenv("PGPORT", "not-a-port")
+	base := buildProviderConfigTimeout("127.0.0.1", 1, 5)
+	attrs := map[string]tftypes.Value{}
+	if err := base.As(&attrs); err != nil {
+		t.Fatal(err)
+	}
+	attrs["port"] = tftypes.NewValue(tftypes.Number, nil)
+
+	resp := configure(context.Background(), tftypes.NewValue(base.Type(), attrs))
+
+	found := false
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid PGPORT" && strings.Contains(d.Detail(), "not-a-port") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Invalid PGPORT', got %v", resp.Diagnostics.Errors())
+	}
+	if resp.ResourceData != nil {
+		t.Error("provider data must stay nil on a configuration error")
+	}
+}
+
+// A configured port wins, so an invalid PGPORT is not even read.
+func TestProvider_Configure_invalidPGPORTIgnoredWithPort(t *testing.T) {
+	t.Setenv("PGPORT", "not-a-port")
+	resp := configure(context.Background(), buildProviderConfigTimeout("127.0.0.1", 1, 5))
+
+	for _, d := range resp.Diagnostics.Errors() {
+		if d.Summary() == "Invalid PGPORT" {
+			t.Fatalf("did not expect 'Invalid PGPORT' with port set, got %v", resp.Diagnostics.Errors())
+		}
+	}
+}
+
+func TestCheckServerVersion_invalidExpected(t *testing.T) {
+	for _, expected := range []string{"", "abc", "v16", ".16"} {
+		// The expected value is checked before the server is asked, so no connection is needed.
+		err := provider.CheckServerVersion(context.Background(), nil, expected)
+		if err == nil || !strings.Contains(err.Error(), "not a major version number") {
+			t.Errorf("CheckServerVersion(%q): expected a format error, got %v", expected, err)
+		}
 	}
 }

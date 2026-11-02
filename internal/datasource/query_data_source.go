@@ -99,14 +99,20 @@ func (d *QueryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Execute inside a transaction. Read-only unless destructive is explicitly allowed.
 	txOpts := &sql.TxOptions{ReadOnly: !allowDestructive}
-	tx, err := d.DB.BeginTx(ctx, txOpts)
+	db, err := common.OnDatabase(ctx, d.DB, state.Database.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error connecting to database", err.Error())
+		return
+	}
+
+	tx, err := db.BeginTx(ctx, txOpts)
 	if err != nil {
 		resp.Diagnostics.AddError("Error starting transaction", err.Error())
 		return
 	}
 	defer common.LogRollback(ctx, tx)
 
-	rows, err := tx.QueryContext(ctx, queryStr)
+	rows, err := runQuery(ctx, tx, queryStr, allowDestructive)
 	if err != nil {
 		resp.Diagnostics.AddError("Error executing query", fmt.Sprintf("Could not execute query: %s", err.Error()))
 		return
@@ -117,6 +123,16 @@ func (d *QueryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading columns", fmt.Sprintf("Could not read column names: %s", err.Error()))
 		return
+	}
+	// Rows are maps keyed by column name, so a repeated name would drop a value.
+	seen := make(map[string]bool, len(columns))
+	for _, col := range columns {
+		if seen[col] {
+			resp.Diagnostics.AddError("Duplicate column name",
+				fmt.Sprintf("The query returns duplicate column name %q; give each column a distinct alias.", col))
+			return
+		}
+		seen[col] = true
 	}
 
 	var resultRows []attr.Value
@@ -171,4 +187,36 @@ func (d *QueryDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// runQuery prepares read-only queries: the simple protocol would run every
+// statement in the string, and a COMMIT among them ends the read-only transaction.
+func runQuery(ctx context.Context, tx common.Tx, query string, allowDestructive bool) (common.Rows, error) {
+	if allowDestructive {
+		return tx.QueryContext(ctx, query)
+	}
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := stmt.QueryContext(ctx)
+	if err != nil {
+		_ = stmt.Close()
+		return nil, err
+	}
+	return &stmtRows{Rows: rows, stmt: stmt}, nil
+}
+
+// stmtRows closes its statement after the rows; closing it first breaks the connection.
+type stmtRows struct {
+	common.Rows
+	stmt common.Stmt
+}
+
+func (r *stmtRows) Close() error {
+	err := r.Rows.Close()
+	if cerr := r.stmt.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

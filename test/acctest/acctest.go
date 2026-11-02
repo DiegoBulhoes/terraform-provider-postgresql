@@ -87,7 +87,11 @@ func SetupTestContainer(m *testing.M) {
 	if os.Getenv("PGHOST") != "" {
 		os.Exit(m.Run())
 	}
+	os.Exit(runWithContainer(m))
+}
 
+// runWithContainer returns the exit code instead of exiting, so the deferred Terminate runs.
+func runWithContainer(m *testing.M) int {
 	ctx := context.Background()
 
 	req := testcontainers.ContainerRequest{
@@ -110,7 +114,7 @@ func SetupTestContainer(m *testing.M) {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start postgres container: %s\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	defer func() {
@@ -122,27 +126,63 @@ func SetupTestContainer(m *testing.M) {
 	host, err := pgContainer.Host(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get container host: %s\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	port, err := pgContainer.MappedPort(ctx, "5432/tcp")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get container port: %s\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	setEnv := func(key, value string) {
+	for key, value := range map[string]string{
+		"PGHOST":     host,
+		"PGPORT":     port.Port(),
+		"PGUSER":     "postgres",
+		"PGPASSWORD": "postgres",
+		"PGDATABASE": "postgres",
+		"PGSSLMODE":  "disable",
+	} {
 		if err := os.Setenv(key, value); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to set %s: %s\n", key, err)
-			os.Exit(1)
+			return 1
 		}
 	}
-	setEnv("PGHOST", host)
-	setEnv("PGPORT", port.Port())
-	setEnv("PGUSER", "postgres")
-	setEnv("PGPASSWORD", "postgres")
-	setEnv("PGDATABASE", "postgres")
-	setEnv("PGSSLMODE", "disable")
 
-	os.Exit(m.Run())
+	return m.Run()
+}
+
+// OpenDatabase opens a connection to another database on the test server.
+func OpenDatabase(name string) (*sql.DB, error) {
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		GetEnvOrDefault("PGHOST", "localhost"), GetEnvOrDefault("PGPORT", "5432"),
+		GetEnvOrDefault("PGUSER", "postgres"), GetEnvOrDefault("PGPASSWORD", "postgres"),
+		name, GetEnvOrDefault("PGSSLMODE", "disable"),
+	)
+	return sql.Open("postgres", connStr)
+}
+
+// SchemaExists reports whether a schema exists in the given database.
+func SchemaExists(database, schema string) (bool, error) {
+	db, err := OpenDatabase(database)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close() //nolint:errcheck
+	var exists bool
+	err = db.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)`, schema).Scan(&exists)
+	return exists, err
+}
+
+// MustExec runs SQL on the test database and fails the test on error.
+func MustExec(t *testing.T, query string) {
+	t.Helper()
+	db, err := GetDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(query); err != nil {
+		t.Fatalf("%s: %s", query, err)
+	}
 }

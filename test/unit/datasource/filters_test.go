@@ -266,25 +266,26 @@ func TestTablesDataSource_Read_allFiltersCombined(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// VersionDataSource — SHOW server_version_num parse path
+// VersionDataSource — major and minor from server_version_num
 // ---------------------------------------------------------------------------
 
-// TestVersionDataSource_Read_versionRegexMiss exercises the else-branch where
-// the "x.y" regex doesn't match (e.g., a devel build string).
-func TestVersionDataSource_Read_versionRegexMiss(t *testing.T) {
+// A beta has no minor in version(), and the compiler version there looks like one.
+func TestVersionDataSource_Read_betaUsesServerVersionNum(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDB := mocks.NewMockDBTX(ctrl)
 	mockScan1 := mocks.NewMockScanner(ctrl)
 	mockScan2 := mocks.NewMockScanner(ctrl)
 
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScan1)
+	gomock.InOrder(
+		mockDB.EXPECT().QueryRowContext(gomock.Any(), "SELECT version()").Return(mockScan1),
+		mockDB.EXPECT().QueryRowContext(gomock.Any(), "SHOW server_version_num").Return(mockScan2),
+	)
 	mockScan1.EXPECT().Scan(gomock.Any()).DoAndReturn(func(dest ...any) error {
-		*dest[0].(*string) = "PostgreSQL devel-build"
+		*dest[0].(*string) = "PostgreSQL 15beta1 on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14) 12.2.0"
 		return nil
 	})
-	mockDB.EXPECT().QueryRowContext(gomock.Any(), gomock.Any()).Return(mockScan2)
 	mockScan2.EXPECT().Scan(gomock.Any()).DoAndReturn(func(dest ...any) error {
-		*dest[0].(*string) = "999999"
+		*dest[0].(*string) = "150000"
 		return nil
 	})
 
@@ -296,5 +297,13 @@ func TestVersionDataSource_Read_versionRegexMiss(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var got datasource.VersionDataSourceModel
+	resp.State.Get(ctx, &got)
+	if got.Major.ValueInt64() != 15 || got.Minor.ValueInt64() != 0 {
+		t.Errorf("expected major 15 minor 0, got %d.%d", got.Major.ValueInt64(), got.Minor.ValueInt64())
+	}
+	if got.ServerVersionNum.ValueInt64() != 150000 {
+		t.Errorf("expected server_version_num 150000, got %d", got.ServerVersionNum.ValueInt64())
 	}
 }

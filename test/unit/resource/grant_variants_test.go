@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/resource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -65,7 +66,7 @@ func TestBuildGrantStatements_AllObjectTypesTableDriven(t *testing.T) {
 		{"sequence_all", "sequence", "", "public", nil, "", 1, "ALL SEQUENCES IN SCHEMA"},
 		{"sequence_one", "sequence", "", "public", []string{"s1"}, "", 1, `ON SEQUENCE "public"."s1"`},
 		{"function_all", "function", "", "public", nil, "", 1, "ALL FUNCTIONS IN SCHEMA"},
-		{"function_one", "function", "", "public", []string{"f1"}, "", 1, `ON FUNCTION "public"."f1"`},
+		{"function_one", "function", "", "public", []string{"public.f1(integer)"}, "", 1, `ON ROUTINE public.f1(integer) TO`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,7 +110,7 @@ func TestBuildRevokeStatements_AllObjectTypesTableDriven(t *testing.T) {
 		{"sequence_all", "sequence", "", "public", nil, 1, "ALL SEQUENCES IN SCHEMA"},
 		{"sequence_multiple", "sequence", "", "public", []string{"s1", "s2", "s3"}, 3, ""},
 		{"function_all", "function", "", "public", nil, 1, "ALL FUNCTIONS IN SCHEMA"},
-		{"function_one", "function", "", "public", []string{"f1"}, 1, `ON FUNCTION "public"."f1"`},
+		{"function_one", "function", "", "public", []string{"public.f1(integer)"}, 1, `ON ROUTINE public.f1(integer) FROM`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,4 +259,61 @@ func sliceSetEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestGrantResource_ValidateConfig_TableDriven(t *testing.T) {
+	str := func(v any) tftypes.Value { return tftypes.NewValue(tftypes.String, v) }
+	objects := tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{str("t1")})
+	noObjects := tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil)
+	tests := []struct {
+		name       string
+		objectType tftypes.Value
+		database   tftypes.Value
+		schema     tftypes.Value
+		objects    tftypes.Value
+		wantPaths  []string
+	}{
+		{"database ok", str("database"), str("db"), str(nil), noObjects, nil},
+		{"database missing", str("database"), str(nil), str(nil), noObjects, []string{"database"}},
+		{"schema ok", str("schema"), str(nil), str("public"), noObjects, nil},
+		{"schema missing", str("schema"), str("db"), str(nil), noObjects, []string{"schema"}},
+		{"table missing schema", str("table"), str(nil), str(nil), objects, []string{"schema"}},
+		{"function upper case missing schema", str("FUNCTION"), str(nil), str(nil), noObjects, []string{"schema"}},
+		{"objects on schema", str("schema"), str(nil), str("public"), objects, []string{"objects"}},
+		{"objects on database without database", str("database"), str(nil), str(nil), objects, []string{"database", "objects"}},
+		{"table with objects ok", str("table"), str(nil), str("public"), objects, nil},
+		{"unknown object type skipped", tftypes.NewValue(tftypes.String, tftypes.UnknownValue), str(nil), str(nil), objects, nil},
+	}
+	r := &resource.GrantResource{}
+	sresp := &fwresource.SchemaResponse{}
+	r.Schema(context.Background(), fwresource.SchemaRequest{}, sresp)
+	s := sresp.Schema
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg := tftypes.NewValue(s.Type().TerraformType(ctx), map[string]tftypes.Value{
+				"id":                str(nil),
+				"role":              str("r"),
+				"database":          tc.database,
+				"schema":            tc.schema,
+				"object_type":       tc.objectType,
+				"objects":           tc.objects,
+				"privileges":        tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{str("SELECT")}),
+				"with_grant_option": tftypes.NewValue(tftypes.Bool, nil),
+				"timeouts":          tftypes.NewValue(timeoutsObjectType, nil),
+			})
+			resp := &fwresource.ValidateConfigResponse{}
+			r.ValidateConfig(ctx, fwresource.ValidateConfigRequest{Config: tfsdk.Config{Raw: cfg, Schema: s}}, resp)
+
+			var got []string
+			for _, d := range resp.Diagnostics.Errors() {
+				if wp, ok := d.(diag.DiagnosticWithPath); ok {
+					got = append(got, wp.Path().String())
+				}
+			}
+			if len(got) != len(resp.Diagnostics.Errors()) || !sliceSetEqual(got, tc.wantPaths) {
+				t.Errorf("expected errors on %v, got %v", tc.wantPaths, resp.Diagnostics.Errors())
+			}
+		})
+	}
 }

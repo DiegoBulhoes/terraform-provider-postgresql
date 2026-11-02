@@ -3,7 +3,9 @@ package provider_test
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/provider"
 	fwprovider "github.com/hashicorp/terraform-plugin-framework/provider"
@@ -44,8 +46,8 @@ func TestProvider_Schema(t *testing.T) {
 func TestProvider_Resources(t *testing.T) {
 	p := &provider.PostgreSQLProvider{}
 	resources := p.Resources(context.Background())
-	if len(resources) != 5 {
-		t.Errorf("expected 5 resources, got %d", len(resources))
+	if len(resources) != 8 {
+		t.Errorf("expected 8 resources, got %d", len(resources))
 	}
 }
 
@@ -207,7 +209,6 @@ func buildProviderConfig(host string, port int, username, password, database, ss
 			"max_idle_connections": tftypes.Number,
 			"conn_max_lifetime":    tftypes.Number,
 			"conn_max_idle_time":   tftypes.Number,
-			"superuser":            tftypes.Bool,
 			"expected_version":     tftypes.String,
 		},
 	}, map[string]tftypes.Value{
@@ -225,7 +226,6 @@ func buildProviderConfig(host string, port int, username, password, database, ss
 		"max_idle_connections": tftypes.NewValue(tftypes.Number, nil),
 		"conn_max_lifetime":    tftypes.NewValue(tftypes.Number, nil),
 		"conn_max_idle_time":   tftypes.NewValue(tftypes.Number, nil),
-		"superuser":            tftypes.NewValue(tftypes.Bool, nil),
 		"expected_version":     tftypes.NewValue(tftypes.String, nil),
 	})
 }
@@ -297,51 +297,6 @@ func TestEnvOrDefaultInt_NullWithoutEnvVar(t *testing.T) {
 	}
 }
 
-func TestEnvOrDefaultBool_SetValue(t *testing.T) {
-	got := provider.EnvOrDefaultBool(types.BoolValue(true), "TEST_PROVIDER_ENV_BOOL_SET", false)
-	if got != true {
-		t.Errorf("expected %v, got %v", true, got)
-	}
-}
-
-func TestEnvOrDefaultBool_NullWithEnvTrue(t *testing.T) {
-	os.Setenv("TEST_PROVIDER_ENV_BOOL_TRUE", "true")
-	t.Cleanup(func() { os.Unsetenv("TEST_PROVIDER_ENV_BOOL_TRUE") })
-
-	got := provider.EnvOrDefaultBool(types.BoolNull(), "TEST_PROVIDER_ENV_BOOL_TRUE", false)
-	if got != true {
-		t.Errorf("expected %v, got %v", true, got)
-	}
-}
-
-func TestEnvOrDefaultBool_NullWithEnvFalse(t *testing.T) {
-	os.Setenv("TEST_PROVIDER_ENV_BOOL_FALSE", "false")
-	t.Cleanup(func() { os.Unsetenv("TEST_PROVIDER_ENV_BOOL_FALSE") })
-
-	got := provider.EnvOrDefaultBool(types.BoolNull(), "TEST_PROVIDER_ENV_BOOL_FALSE", true)
-	if got != false {
-		t.Errorf("expected %v, got %v", false, got)
-	}
-}
-
-func TestEnvOrDefaultBool_NullWithInvalidEnvVar(t *testing.T) {
-	os.Setenv("TEST_PROVIDER_ENV_BOOL_INVALID", "not_a_bool")
-	t.Cleanup(func() { os.Unsetenv("TEST_PROVIDER_ENV_BOOL_INVALID") })
-
-	got := provider.EnvOrDefaultBool(types.BoolNull(), "TEST_PROVIDER_ENV_BOOL_INVALID", true)
-	if got != true {
-		t.Errorf("expected %v, got %v", true, got)
-	}
-}
-
-func TestEnvOrDefaultBool_NullWithoutEnvVar(t *testing.T) {
-	os.Unsetenv("TEST_PROVIDER_ENV_BOOL_UNSET")
-	got := provider.EnvOrDefaultBool(types.BoolNull(), "TEST_PROVIDER_ENV_BOOL_UNSET", true)
-	if got != true {
-		t.Errorf("expected %v, got %v", true, got)
-	}
-}
-
 // TestEnvOrDefault_TableDriven consolidates coverage of the three
 // Env*OrDefault helpers across (null|set|unknown) × (envSet|envUnset|envInvalid).
 func TestEnvOrDefault_TableDriven(t *testing.T) {
@@ -408,35 +363,40 @@ func TestEnvOrDefaultInt_TableDriven(t *testing.T) {
 	}
 }
 
-func TestEnvOrDefaultBool_TableDriven(t *testing.T) {
+func TestSSLModeAttempts_TableDriven(t *testing.T) {
 	tests := []struct {
-		name       string
-		tfVal      types.Bool
-		envName    string
-		envValue   string
-		defaultVal bool
-		want       bool
+		sslmode string
+		want    []string
 	}{
-		{"tf_true_overrides_env_false", types.BoolValue(true), "TB1", "false", false, true},
-		{"tf_false_overrides_env_true", types.BoolValue(false), "TB2", "true", true, false},
-		{"env_true", types.BoolNull(), "TB3", "true", false, true},
-		{"env_false", types.BoolNull(), "TB4", "false", true, false},
-		{"env_1_is_true", types.BoolNull(), "TB5", "1", false, true},
-		{"env_0_is_false", types.BoolNull(), "TB6", "0", true, false},
-		{"env_invalid_uses_default", types.BoolNull(), "TB7", "maybe", true, true},
-		{"null_no_env_uses_default", types.BoolNull(), "TB8", "", false, false},
+		{"prefer", []string{"require", "disable"}},
+		{"allow", []string{"disable", "require"}},
+		{"disable", []string{"disable"}},
+		{"require", []string{"require"}},
+		{"verify-ca", []string{"verify-ca"}},
+		{"verify-full", []string{"verify-full"}},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.envName != "" && tc.envValue != "" {
-				os.Setenv(tc.envName, tc.envValue)
-				t.Cleanup(func() { os.Unsetenv(tc.envName) })
-			} else if tc.envName != "" {
-				os.Unsetenv(tc.envName)
+		t.Run(tc.sslmode, func(t *testing.T) {
+			got := provider.SSLModeAttempts(tc.sslmode)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("SSLModeAttempts(%q) = %v, want %v", tc.sslmode, got, tc.want)
 			}
-			got := provider.EnvOrDefaultBool(tc.tfVal, tc.envName, tc.defaultVal)
-			if got != tc.want {
-				t.Errorf("expected %v, got %v", tc.want, got)
+		})
+	}
+}
+
+// A refused connection is not an SSL refusal, so prefer must not fall back to disable.
+func TestConnect_refusedConnectionStops(t *testing.T) {
+	params := []string{"host=127.0.0.1", "port=1", "user=x", "dbname=x", "connect_timeout=5"}
+	for _, mode := range []string{"prefer", "allow", "disable"} {
+		t.Run(mode, func(t *testing.T) {
+			db, err := provider.Connect(context.Background(), params, mode,
+				provider.PoolSettings{MaxOpen: 1, MaxIdle: 1, MaxLifetime: time.Second, MaxIdleTime: time.Second, ConnectTimeout: 5 * time.Second})
+			if err == nil {
+				t.Fatal("expected error for a closed port")
+			}
+			if db != nil {
+				t.Error("expected nil pool on error")
 			}
 		})
 	}

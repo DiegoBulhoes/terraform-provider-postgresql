@@ -10,153 +10,13 @@ import (
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/lib/pq"
+	_ "github.com/lib/pq"
 )
-
-func TestIsRetryableError_nil(t *testing.T) {
-	if common.IsRetryableError(nil) {
-		t.Error("expected false for nil error")
-	}
-}
-
-func TestIsRetryableError_nonPq(t *testing.T) {
-	if common.IsRetryableError(errors.New("generic error")) {
-		t.Error("expected false for non-pq error")
-	}
-}
-
-func TestIsRetryableError_retryable(t *testing.T) {
-	err := &pq.Error{Code: "53300"}
-	if !common.IsRetryableError(err) {
-		t.Error("expected true for too_many_connections")
-	}
-}
-
-func TestIsRetryableError_deadlock(t *testing.T) {
-	err := &pq.Error{Code: "40P01"}
-	if !common.IsRetryableError(err) {
-		t.Error("expected true for deadlock_detected")
-	}
-}
-
-func TestIsRetryableError_nonRetryable(t *testing.T) {
-	err := &pq.Error{Code: "42P01"}
-	if common.IsRetryableError(err) {
-		t.Error("expected false for undefined_table")
-	}
-}
-
-// mockExec is a simple inline mock for the ExecContext interface, used to avoid
-// import cycles with the generated mocks package.
-type mockExec struct {
-	calls   int
-	results []sql.Result
-	errors  []error
-}
-
-func (m *mockExec) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
-	i := m.calls
-	m.calls++
-	if i < len(m.errors) {
-		return m.results[i], m.errors[i]
-	}
-	return nil, fmt.Errorf("unexpected call %d", i)
-}
 
 type noopResult struct{}
 
 func (r noopResult) LastInsertId() (int64, error) { return 0, nil }
 func (r noopResult) RowsAffected() (int64, error) { return 0, nil }
-
-func TestRetryExec_ImmediateSuccess(t *testing.T) {
-	m := &mockExec{
-		results: []sql.Result{noopResult{}},
-		errors:  []error{nil},
-	}
-	result, err := common.RetryExec(context.Background(), m, "SELECT 1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if m.calls != 1 {
-		t.Errorf("expected 1 call, got %d", m.calls)
-	}
-}
-
-func TestRetryExec_NonRetryableError(t *testing.T) {
-	m := &mockExec{
-		results: []sql.Result{nil},
-		errors:  []error{&pq.Error{Code: "42P01"}},
-	}
-	_, err := common.RetryExec(context.Background(), m, "INSERT INTO foo VALUES (1)")
-	if err == nil {
-		t.Fatal("expected error for non-retryable pq.Error")
-	}
-	if m.calls != 1 {
-		t.Errorf("expected 1 call (no retry), got %d", m.calls)
-	}
-}
-
-func TestRetryExec_RetryableErrorThenSuccess(t *testing.T) {
-	m := &mockExec{
-		results: []sql.Result{nil, noopResult{}},
-		errors:  []error{&pq.Error{Code: "53300"}, nil},
-	}
-	result, err := common.RetryExec(context.Background(), m, "SELECT 1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if m.calls != 2 {
-		t.Errorf("expected 2 calls, got %d", m.calls)
-	}
-}
-
-func TestRetryExec_AllRetriesFail(t *testing.T) {
-	m := &mockExec{
-		results: []sql.Result{nil, nil, nil},
-		errors: []error{
-			&pq.Error{Code: "40P01"},
-			&pq.Error{Code: "40P01"},
-			&pq.Error{Code: "40P01"},
-		},
-	}
-	_, err := common.RetryExec(context.Background(), m, "UPDATE foo SET bar = 1")
-	if err == nil {
-		t.Fatal("expected error after all retries exhausted")
-	}
-	pqErr, ok := err.(*pq.Error)
-	if !ok {
-		t.Fatalf("expected *pq.Error, got %T", err)
-	}
-	if pqErr.Code != "40P01" {
-		t.Errorf("expected error code 40P01, got %s", pqErr.Code)
-	}
-	if m.calls != 3 {
-		t.Errorf("expected 3 calls, got %d", m.calls)
-	}
-}
-
-func TestRetryExec_GenericErrorNoRetry(t *testing.T) {
-	m := &mockExec{
-		results: []sql.Result{nil},
-		errors:  []error{fmt.Errorf("generic error")},
-	}
-	_, err := common.RetryExec(context.Background(), m, "SELECT 1")
-	if err == nil {
-		t.Fatal("expected error for generic error")
-	}
-	if err.Error() != "generic error" {
-		t.Errorf("expected 'generic error', got %q", err.Error())
-	}
-	if m.calls != 1 {
-		t.Errorf("expected 1 call (no retry), got %d", m.calls)
-	}
-}
 
 func TestConfigureDB_wrongType(t *testing.T) {
 	_, err := common.ConfigureDB("not a db")
@@ -500,20 +360,21 @@ func TestBuildRoleOptions_minimalRole(t *testing.T) {
 		Login:           &noLogin,
 		ConnectionLimit: -1,
 	})
-	wants := []string{"NOLOGIN", "NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "CONNECTION LIMIT -1"}
-	for _, w := range wants {
-		if !contains(got, w) {
-			t.Errorf("expected %q in %q", w, got)
-		}
+	if got != " WITH NOLOGIN CONNECTION LIMIT -1" {
+		t.Errorf("expected nil flags omitted, got %q", got)
 	}
-	if !startsWith(got, " WITH ") {
-		t.Errorf("expected leading ' WITH ' in %q", got)
+}
+
+func TestBuildRoleOptions_emptyStillHasConnectionLimit(t *testing.T) {
+	if got := common.BuildRoleOptions(common.RoleOptions{}); got != " WITH CONNECTION LIMIT 0" {
+		t.Errorf("expected only CONNECTION LIMIT, got %q", got)
 	}
 }
 
 func TestBuildRoleOptions_loginUserWithPassword(t *testing.T) {
+	superuser := true
 	got := common.BuildRoleOptions(common.RoleOptions{
-		Superuser:       true,
+		Superuser:       &superuser,
 		ConnectionLimit: 20,
 		Password:        "hunter2",
 	})
@@ -529,6 +390,51 @@ func TestBuildRoleOptions_loginUserWithPassword(t *testing.T) {
 	if !contains(got, "CONNECTION LIMIT 20") {
 		t.Errorf("expected CONNECTION LIMIT 20 in %q", got)
 	}
+}
+
+func TestBuildRoleOptions_nullPassword(t *testing.T) {
+	got := common.BuildRoleOptions(common.RoleOptions{NullPassword: true})
+	if !contains(got, "PASSWORD NULL") {
+		t.Errorf("expected PASSWORD NULL in %q", got)
+	}
+	// A password set wins over clearing it.
+	got = common.BuildRoleOptions(common.RoleOptions{Password: "pw", NullPassword: true})
+	if !contains(got, "PASSWORD 'pw'") || contains(got, "PASSWORD NULL") {
+		t.Errorf("expected only the quoted password in %q", got)
+	}
+}
+
+func TestFlagChange_TableDriven(t *testing.T) {
+	tests := []struct {
+		name  string
+		plan  types.Bool
+		state types.Bool
+		want  *bool
+	}{
+		{"create true", types.BoolValue(true), types.BoolNull(), boolPtr(true)},
+		{"create false omitted", types.BoolValue(false), types.BoolNull(), nil},
+		{"create unknown state", types.BoolValue(true), types.BoolUnknown(), boolPtr(true)},
+		{"alter unchanged", types.BoolValue(true), types.BoolValue(true), nil},
+		{"alter to false", types.BoolValue(false), types.BoolValue(true), boolPtr(false)},
+		{"alter to true", types.BoolValue(true), types.BoolValue(false), boolPtr(true)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := common.FlagChange(tc.plan, tc.state)
+			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+				t.Errorf("FlagChange(%v, %v) = %v, want %v", tc.plan, tc.state, fmtBoolPtr(got), fmtBoolPtr(tc.want))
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func fmtBoolPtr(b *bool) string {
+	if b == nil {
+		return "nil"
+	}
+	return fmt.Sprint(*b)
 }
 
 func TestBuildRoleOptions_passwordQuoted(t *testing.T) {
@@ -575,6 +481,9 @@ func (f *fakeTx) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result,
 func (f *fakeTx) QueryContext(_ context.Context, _ string, _ ...any) (common.Rows, error) {
 	return nil, nil
 }
+func (f *fakeTx) PrepareContext(_ context.Context, _ string) (common.Stmt, error) {
+	return nil, nil
+}
 func (f *fakeTx) Commit() error { return nil }
 func (f *fakeTx) Rollback() error {
 	f.calls++
@@ -608,37 +517,11 @@ func TestLogRollback_genericError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// NewDBWrapperWithOptions tests
-// ---------------------------------------------------------------------------
-
-func TestNewDBWrapperWithOptions_storesSuperuser(t *testing.T) {
-	w := common.NewDBWrapperWithOptions(&sql.DB{}, false)
-	if w.Superuser {
-		t.Error("expected Superuser=false")
-	}
-	w2 := common.NewDBWrapperWithOptions(&sql.DB{}, true)
-	if !w2.Superuser {
-		t.Error("expected Superuser=true")
-	}
-}
-
-func TestNewDBWrapper_defaultsSuperuserTrue(t *testing.T) {
-	w := common.NewDBWrapper(&sql.DB{})
-	if !w.Superuser {
-		t.Error("expected default Superuser=true for backward compat")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
 func contains(s, sub string) bool {
 	return len(sub) == 0 || indexOf(s, sub) >= 0
-}
-
-func startsWith(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 func indexOf(s, sub string) int {

@@ -142,10 +142,11 @@ func (d *RoleDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 
 	// Query role memberships
 	rows, err := d.DB.QueryContext(ctx,
-		`SELECT r.rolname
+		`SELECT DISTINCT r.rolname
 		 FROM pg_catalog.pg_auth_members m
 		 JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-		 WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = $1)`, name,
+		 WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = $1)
+		 ORDER BY 1`, name,
 	)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading role memberships", fmt.Sprintf("Could not read memberships for role %q: %s", name, err.Error()))

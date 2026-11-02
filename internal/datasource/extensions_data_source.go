@@ -101,7 +101,13 @@ func (d *ExtensionsDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		LEFT JOIN pg_catalog.pg_available_extensions a ON e.extname = a.name
 		ORDER BY e.extname`
 
-	rows, err := d.DB.QueryContext(ctx, query)
+	db, err := common.OnDatabase(ctx, d.DB, state.Database.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error connecting to database", err.Error())
+		return
+	}
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying extensions", fmt.Sprintf("Could not query extensions: %s", err.Error()))
 		return

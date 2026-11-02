@@ -2,9 +2,9 @@ package resource
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -49,6 +49,7 @@ type RoleResourceModel struct {
 	Replication     types.Bool       `tfsdk:"replication"`
 	ConnectionLimit types.Int64      `tfsdk:"connection_limit"`
 	Privileges      []PrivilegeModel `tfsdk:"privilege"`
+	ReassignOwnedTo types.String     `tfsdk:"reassign_owned_to"`
 	OID             types.Int64      `tfsdk:"oid"`
 	Timeouts        timeouts.Value   `tfsdk:"timeouts"`
 }
@@ -106,6 +107,10 @@ func (r *RoleResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 					int64validator.AtLeast(-1),
 				},
 			},
+			"reassign_owned_to": schema.StringAttribute{
+				Description: "On destroy, reassign the objects the role owns in the provider's database to this role and drop its privileges there (REASSIGN OWNED, DROP OWNED). Objects in other databases still block the drop.",
+				Optional:    true,
+			},
 			"oid": schema.Int64Attribute{
 				Description: "The OID of the role.",
 				Computed:    true,
@@ -117,7 +122,7 @@ func (r *RoleResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"privileges": schema.SetAttribute{
-							Description: "The set of privileges to grant (e.g. SELECT, INSERT, UPDATE, DELETE, USAGE, CREATE, ALL).",
+							Description: "The set of privileges to grant (e.g. SELECT, INSERT, UPDATE, DELETE, USAGE, CREATE, ALL). Case-insensitive.",
 							Required:    true,
 							ElementType: types.StringType,
 							Validators: []validator.Set{
@@ -139,11 +144,11 @@ func (r *RoleResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 							Optional:    true,
 						},
 						"database": schema.StringAttribute{
-							Description: "The database for database-level grants.",
+							Description: "The database of the grant. Schema, table, sequence and function privileges run in this database, which defaults to the provider's database.",
 							Optional:    true,
 						},
 						"objects": schema.ListAttribute{
-							Description: "Specific object names. If empty, grants on ALL objects of the given type in the schema.",
+							Description: "Specific object names; a function is named alone (all overloads) or with its argument types, as in f(integer). If empty, grants on ALL objects of the given type in the schema.",
 							Optional:    true,
 							ElementType: types.StringType,
 						},
@@ -152,6 +157,7 @@ func (r *RoleResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 			},
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -187,43 +193,28 @@ func (r *RoleResource) Create(ctx context.Context, req resource.CreateRequest, r
 	defer cancel()
 
 	roleName := plan.Name.ValueString()
-	sqlStr := fmt.Sprintf("CREATE ROLE %s", pq.QuoteIdentifier(roleName))
-	sqlStr += r.BuildRoleOptions(ctx, &plan)
-
-	tx, err := r.DB.BeginTx(ctx, nil)
+	grants, err := r.PrivilegeStatements(ctx, nil, roleName, plan.Privileges, true)
 	if err != nil {
-		resp.Diagnostics.AddError("Error starting transaction", err.Error())
+		resp.Diagnostics.AddError("Error preparing privileges", err.Error())
 		return
 	}
-	defer common.LogRollback(ctx, tx)
-
-	_, err = tx.ExecContext(ctx, sqlStr)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error creating role",
-			fmt.Errorf("create role %s: %w", roleName, err).Error(),
-		)
+	main, others := r.splitByConn(ctx, grants)
+	main = append([]string{fmt.Sprintf("CREATE ROLE %s", pq.QuoteIdentifier(roleName)) + r.BuildRoleOptions(ctx, &plan, nil)}, main...)
+	if err := common.ExecInTx(ctx, r.DB, main); err != nil {
+		resp.Diagnostics.AddError("Error creating role", fmt.Sprintf("Could not create role %s: %s", roleName, err.Error()))
 		return
 	}
 
-	// Grant inline privileges
-	resp.Diagnostics.Append(r.GrantPrivileges(ctx, tx, roleName, plan.Privileges)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		resp.Diagnostics.AddError("Error committing transaction", err.Error())
-		return
-	}
-
-	diags := r.ReadRole(ctx, &plan)
+	_, diags := r.ReadRole(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
+	// Saved before the grants in other databases: if one fails, the role is tracked and replaced.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if err := runGroups(ctx, others); err != nil {
+		resp.Diagnostics.AddError("Error granting privileges", err.Error())
+	}
 }
 
 func (r *RoleResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -233,15 +224,25 @@ func (r *RoleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	diags := r.ReadRole(ctx, &state)
-	if diags.HasError() {
-		for _, d := range diags {
-			if d.Summary() == "Role not found" {
-				resp.State.RemoveResource(ctx)
-				return
-			}
-		}
-		resp.Diagnostics.Append(diags...)
+	readTimeout, d := state.Timeouts.Read(ctx, common.DefaultTimeout)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	found, diags := r.ReadRole(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	resp.Diagnostics.Append(r.ReadPrivilegeBlocks(ctx, state.Name.ValueString(), state.Privileges)...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -268,44 +269,32 @@ func (r *RoleResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	oldName := state.Name.ValueString()
 	newName := plan.Name.ValueString()
 
-	if oldName != newName {
-		renameSQL := fmt.Sprintf("ALTER ROLE %s RENAME TO %s",
-			pq.QuoteIdentifier(oldName),
-			pq.QuoteIdentifier(newName),
-		)
-		_, err := r.DB.ExecContext(ctx, renameSQL)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error renaming role",
-				fmt.Sprintf("Could not rename role %s to %s: %s", oldName, newName, err.Error()),
-			)
-			return
-		}
+	// Old privileges are revoked and new ones granted; every statement is built before any runs.
+	groups, err := r.PrivilegeStatements(ctx, nil, newName, state.Privileges, false)
+	if err == nil {
+		groups, err = r.PrivilegeStatements(ctx, groups, newName, plan.Privileges, true)
 	}
-
-	alterSQL := fmt.Sprintf("ALTER ROLE %s", pq.QuoteIdentifier(newName))
-	alterSQL += r.BuildRoleOptions(ctx, &plan)
-
-	_, err := r.DB.ExecContext(ctx, alterSQL)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error updating role",
-			fmt.Sprintf("Could not update role %s: %s", newName, err.Error()),
-		)
+		resp.Diagnostics.AddError("Error preparing privileges", err.Error())
+		return
+	}
+	main, others := r.splitByConn(ctx, groups)
+
+	var head []string
+	if oldName != newName {
+		head = append(head, fmt.Sprintf("ALTER ROLE %s RENAME TO %s", pq.QuoteIdentifier(oldName), pq.QuoteIdentifier(newName)))
+	}
+	head = append(head, fmt.Sprintf("ALTER ROLE %s", pq.QuoteIdentifier(newName))+r.BuildRoleOptions(ctx, &plan, &state))
+	if err := common.ExecInTx(ctx, r.DB, append(head, main...)); err != nil {
+		resp.Diagnostics.AddError("Error updating role", fmt.Sprintf("Could not update role %s: %s", oldName, err.Error()))
+		return
+	}
+	if err := runGroups(ctx, others); err != nil {
+		resp.Diagnostics.AddError("Error updating privileges", err.Error())
 		return
 	}
 
-	// Revoke old privileges, then grant new ones
-	resp.Diagnostics.Append(r.RevokePrivileges(ctx, r.DB, newName, state.Privileges)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	resp.Diagnostics.Append(r.GrantPrivileges(ctx, r.DB, newName, plan.Privileges)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	diags := r.ReadRole(ctx, &plan)
+	_, diags := r.ReadRole(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -331,19 +320,29 @@ func (r *RoleResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 	roleName := state.Name.ValueString()
 
-	// Revoke privileges before dropping the role
-	resp.Diagnostics.Append(r.RevokePrivileges(ctx, r.DB, roleName, state.Privileges)...)
-	if resp.Diagnostics.HasError() {
+	revokes, err := r.PrivilegeStatements(ctx, nil, roleName, state.Privileges, false)
+	if err != nil {
+		resp.Diagnostics.AddError("Error preparing privileges", err.Error())
 		return
 	}
+	for _, g := range revokes {
+		for _, stmt := range g.Statements {
+			tflog.Debug(ctx, "Executing REVOKE for role privilege", map[string]interface{}{"sql": stmt})
+			_, err := g.Conn.ExecContext(ctx, stmt)
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) && goneCodes[pqErr.Code] {
+				continue
+			}
+			if err != nil {
+				resp.Diagnostics.AddError("Error revoking privilege", fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
+				return
+			}
+		}
+	}
 
-	sqlStr := fmt.Sprintf("DROP ROLE %s", pq.QuoteIdentifier(roleName))
-	_, err := r.DB.ExecContext(ctx, sqlStr)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error deleting role",
-			fmt.Sprintf("Could not drop role %s: %s", roleName, err.Error()),
-		)
+	statements := append(ReassignOwned(roleName, state.ReassignOwnedTo), fmt.Sprintf("DROP ROLE %s", pq.QuoteIdentifier(roleName)))
+	if err := common.ExecInTx(ctx, r.DB, statements); err != nil {
+		resp.Diagnostics.AddError("Error deleting role", DropRoleError(roleName, err))
 		return
 	}
 }
@@ -352,124 +351,160 @@ func (r *RoleResource) ImportState(ctx context.Context, req resource.ImportState
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-func (r *RoleResource) BuildRoleOptions(_ context.Context, model *RoleResourceModel) string {
-	noLogin := false
-	return common.BuildRoleOptions(common.RoleOptions{
-		Login:           &noLogin,
-		Superuser:       model.Superuser.ValueBool(),
-		CreateDatabase:  model.CreateDatabase.ValueBool(),
-		CreateRole:      model.CreateRole.ValueBool(),
-		Replication:     model.Replication.ValueBool(),
-		ConnectionLimit: model.ConnectionLimit.ValueInt64(),
-	})
+// BuildRoleOptions renders the WITH clause; state is nil on create, and flags are sent only when they change.
+func (r *RoleResource) BuildRoleOptions(_ context.Context, plan, state *RoleResourceModel) string {
+	var prev *roleAttributes
+	if state != nil {
+		attrs := state.attributes()
+		prev = &attrs
+	}
+	opts := plan.attributes().options(prev)
+	if state == nil {
+		noLogin := false
+		opts.Login = &noLogin
+	}
+	return common.BuildRoleOptions(opts)
 }
 
-func (r *RoleResource) ReadRole(ctx context.Context, model *RoleResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
+// ReadRole reads the role into model; found is false when it does not exist.
+func (r *RoleResource) ReadRole(ctx context.Context, model *RoleResourceModel) (found bool, diags diag.Diagnostics) {
 	roleName := model.Name.ValueString()
 
-	var oid int64
-	var rolSuper, rolCreateDB, rolCreateRole, rolReplication bool
-	var rolConnLimit int64
-
-	const roleQuery = `SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolconnlimit
-		FROM pg_catalog.pg_roles WHERE rolname = $1`
-
-	err := r.DB.QueryRowContext(ctx, roleQuery, roleName).Scan(
-		&oid,
-		&rolSuper,
-		&rolCreateDB,
-		&rolCreateRole,
-		&rolReplication,
-		&rolConnLimit,
-	)
+	row, found, err := readRoleRow(ctx, r.DB, roleName)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			diags.AddError("Role not found", fmt.Sprintf("Role %s does not exist.", roleName))
-			return diags
-		}
 		diags.AddError("Error reading role", fmt.Errorf("read role %s: %w", roleName, err).Error())
-		return diags
+		return true, diags
 	}
-
-	model.OID = types.Int64Value(oid)
-	model.Superuser = types.BoolValue(rolSuper)
-	model.CreateDatabase = types.BoolValue(rolCreateDB)
-	model.CreateRole = types.BoolValue(rolCreateRole)
-	model.Replication = types.BoolValue(rolReplication)
-	model.ConnectionLimit = types.Int64Value(rolConnLimit)
-
-	// Privileges are write-only from the Terraform perspective.
-	// We preserve the plan/state value since reading all grants back
-	// from PostgreSQL catalogs for every object type is complex and
-	// the privileges are already tracked in state.
-
-	return diags
+	if !found {
+		return false, diags
+	}
+	model.attributes().set(row)
+	return true, diags
 }
 
-// grantPrivileges executes GRANT statements for the given privilege blocks.
-func (r *RoleResource) GrantPrivileges(ctx context.Context, exec common.ExecContext, roleName string, privileges []PrivilegeModel) diag.Diagnostics {
+// ReadPrivilegeBlocks replaces the privileges of each block with what the
+// catalog holds, when that differs from the block.
+func (r *RoleResource) ReadPrivilegeBlocks(ctx context.Context, roleName string, blocks []PrivilegeModel) diag.Diagnostics {
 	var diags diag.Diagnostics
-
-	for _, priv := range privileges {
-		privSlice, err := common.NormalizePrivileges(common.StringSetToSlice(ctx, priv.Privileges))
-		if err != nil {
-			diags.AddError("Invalid privileges", err.Error())
+	for i := range blocks {
+		b := &blocks[i]
+		objectType := strings.ToLower(b.ObjectType.ValueString())
+		conn, err := GrantConn(ctx, r.DB, objectType, b.Database.ValueString())
+		if err != nil && !isGone(err) {
+			diags.AddError("Error connecting to database", err.Error())
 			return diags
 		}
-		privList := strings.Join(privSlice, ", ")
-		objectType := strings.ToLower(priv.ObjectType.ValueString())
-		database := priv.Database.ValueString()
-		schemaName := priv.Schema.ValueString()
-
-		var objects []string
-		if common.IsSet(priv.Objects) {
-			objects = common.StringListToSlice(ctx, priv.Objects)
-		}
-
-		statements := BuildGrantStatements(privList, objectType, database, schemaName, roleName, objects, "")
-		for _, stmt := range statements {
-			tflog.Debug(ctx, "Executing GRANT for role privilege", map[string]interface{}{"sql": stmt})
-			_, err := exec.ExecContext(ctx, stmt)
+		var granted GrantedPrivileges
+		if err == nil {
+			granted, err = ReadGrantedPrivileges(ctx, conn, roleName, objectType, b.Database.ValueString(),
+				b.Schema.ValueString(), common.StringListToSlice(ctx, b.Objects))
 			if err != nil {
-				diags.AddError("Error granting privilege",
-					fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
+				diags.AddError("Error reading privileges", err.Error())
 				return diags
 			}
 		}
+		if granted.TargetExists && granted.Objects == 0 {
+			continue
+		}
+		if granted.TargetExists {
+			full, err := FullPrivileges(ctx, conn, objectType)
+			if err != nil {
+				diags.AddError("Error reading privileges", err.Error())
+				return diags
+			}
+			if slices.Equal(ExpandPrivileges(common.StringSetToSlice(ctx, b.Privileges), full), granted.Privileges) {
+				continue
+			}
+		}
+		privileges := granted.Privileges
+		if privileges == nil {
+			privileges = []string{}
+		}
+		set, d := types.SetValueFrom(ctx, types.StringType, privileges)
+		diags.Append(d...)
+		b.Privileges = set
 	}
-
 	return diags
 }
 
-// revokePrivileges executes REVOKE statements for the given privilege blocks.
-func (r *RoleResource) RevokePrivileges(ctx context.Context, exec common.ExecContext, roleName string, privileges []PrivilegeModel) diag.Diagnostics {
-	var diags diag.Diagnostics
+// ConnStatements are statements that run on one connection.
+type ConnStatements struct {
+	Conn       common.DBTX
+	Statements []string
+}
 
-	for _, priv := range privileges {
-		objectType := strings.ToLower(priv.ObjectType.ValueString())
-		database := priv.Database.ValueString()
-		schemaName := priv.Schema.ValueString()
+// PrivilegeStatements appends the GRANT (grant) or REVOKE statements of the
+// blocks to groups, one group per connection. GRANTs need every function to
+// exist; REVOKEs skip the ones that are gone.
+func (r *RoleResource) PrivilegeStatements(ctx context.Context, groups []ConnStatements, roleName string, blocks []PrivilegeModel, grant bool) ([]ConnStatements, error) {
+	for _, b := range blocks {
+		objectType := strings.ToLower(b.ObjectType.ValueString())
+		database := b.Database.ValueString()
+		schemaName := b.Schema.ValueString()
+		conn, err := GrantConn(ctx, r.DB, objectType, database)
+		if !grant && isGone(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		objects := common.StringListToSlice(ctx, b.Objects)
 
-		var objects []string
-		if common.IsSet(priv.Objects) {
-			objects = common.StringListToSlice(ctx, priv.Objects)
+		var statements []string
+		if grant {
+			privileges, err := common.NormalizePrivileges(common.StringSetToSlice(ctx, b.Privileges))
+			if err != nil {
+				return nil, err
+			}
+			if objects, err = GrantObjects(ctx, conn, objectType, schemaName, objects); err != nil {
+				return nil, err
+			}
+			statements = BuildGrantStatements(strings.Join(privileges, ", "), objectType, database, schemaName, roleName, objects, "")
+		} else {
+			if objectType == "function" && len(objects) > 0 {
+				if objects, _, err = ResolveFunctions(ctx, conn, schemaName, objects); err != nil {
+					return nil, err
+				}
+				if len(objects) == 0 {
+					continue
+				}
+			}
+			statements = BuildRevokeStatements(objectType, database, schemaName, roleName, objects)
 		}
 
-		statements := BuildRevokeStatements(objectType, database, schemaName, roleName, objects)
-		for _, stmt := range statements {
-			tflog.Debug(ctx, "Executing REVOKE for role privilege", map[string]interface{}{"sql": stmt})
-			_, err := exec.ExecContext(ctx, stmt)
-			if err != nil {
-				diags.AddError("Error revoking privilege",
-					fmt.Sprintf("SQL: %s\nError: %s", stmt, err.Error()))
-				return diags
-			}
+		i := slices.IndexFunc(groups, func(g ConnStatements) bool { return g.Conn == conn })
+		if i < 0 {
+			groups = append(groups, ConnStatements{Conn: conn})
+			i = len(groups) - 1
+		}
+		groups[i].Statements = append(groups[i].Statements, statements...)
+	}
+	return groups, nil
+}
+
+// splitByConn returns the statements of the provider's connection and the groups of the others.
+func (r *RoleResource) splitByConn(ctx context.Context, groups []ConnStatements) ([]string, []ConnStatements) {
+	var main []string
+	var others []ConnStatements
+	for _, g := range groups {
+		if g.Conn == r.DB {
+			main = append(main, g.Statements...)
+		} else {
+			others = append(others, g)
 		}
 	}
+	logStatements(ctx, main)
+	return main, others
+}
 
-	return diags
+func runGroups(ctx context.Context, groups []ConnStatements) error {
+	for _, g := range groups {
+		logStatements(ctx, g.Statements)
+		if err := common.ExecInTx(ctx, g.Conn, g.Statements); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DiffRoles computes which roles to grant and which to revoke. The returned

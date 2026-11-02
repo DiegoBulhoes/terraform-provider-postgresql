@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -35,8 +36,15 @@ type Rows interface {
 type Tx interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (Rows, error)
+	PrepareContext(ctx context.Context, query string) (Stmt, error)
 	Commit() error
 	Rollback() error
+}
+
+// Stmt abstracts a prepared statement (like *sql.Stmt).
+type Stmt interface {
+	QueryContext(ctx context.Context, args ...any) (Rows, error)
+	Close() error
 }
 
 // DBTX is the interface for database operations used by resources and data sources.
@@ -56,17 +64,112 @@ type ExecContext interface {
 // DBWrapper wraps *sql.DB to satisfy the DBTX interface, returning abstract
 // interfaces instead of concrete sql types.
 type DBWrapper struct {
-	DB        *sql.DB
-	Superuser bool
+	DB *sql.DB
+	// Database is the database DB is connected to.
+	Database string
+	// Open connects to another database on the same server; nil keeps every
+	// operation on DB.
+	Open func(ctx context.Context, database string) (*sql.DB, error)
+
+	mu    sync.Mutex
+	pools map[string]*DBWrapper
 }
 
 func NewDBWrapper(db *sql.DB) *DBWrapper {
-	return &DBWrapper{DB: db, Superuser: true}
+	return &DBWrapper{DB: db}
 }
 
-// NewDBWrapperWithOptions builds a wrapper with explicit options.
-func NewDBWrapperWithOptions(db *sql.DB, superuser bool) *DBWrapper {
-	return &DBWrapper{DB: db, Superuser: superuser}
+// DatabaseSwitcher is implemented by connections that can reach other databases.
+type DatabaseSwitcher interface {
+	ForDatabase(ctx context.Context, database string) (DBTX, error)
+	ReleaseDatabase(database string) error
+}
+
+// switchers holds every wrapper that opened another database. Terraform runs one
+// provider per process, but tests configure many in one, and any of them blocks a drop.
+var (
+	switchersMu sync.Mutex
+	switchers   = map[*DBWrapper]struct{}{}
+)
+
+// ForDatabase returns a connection to the named database, opening and caching
+// a pool on first use. An empty name or the default database returns w.
+func (w *DBWrapper) ForDatabase(ctx context.Context, database string) (DBTX, error) {
+	if database == "" || database == w.Database || w.Open == nil {
+		return w, nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if p, ok := w.pools[database]; ok {
+		return p, nil
+	}
+	db, err := w.Open(ctx, database)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database %q: %w", database, err)
+	}
+	if w.pools == nil {
+		w.pools = map[string]*DBWrapper{}
+		switchersMu.Lock()
+		switchers[w] = struct{}{}
+		switchersMu.Unlock()
+	}
+	p := &DBWrapper{DB: db, Database: database}
+	w.pools[database] = p
+	return p, nil
+}
+
+// ReleaseDatabase closes the cached pools of a database, so that it can be dropped or renamed.
+func (w *DBWrapper) ReleaseDatabase(database string) error {
+	switchersMu.Lock()
+	all := make([]*DBWrapper, 0, len(switchers))
+	for s := range switchers {
+		all = append(all, s)
+	}
+	switchersMu.Unlock()
+
+	var errs []error
+	for _, s := range all {
+		s.mu.Lock()
+		if p, ok := s.pools[database]; ok {
+			delete(s.pools, database)
+			errs = append(errs, p.DB.Close())
+		}
+		s.mu.Unlock()
+	}
+	return errors.Join(errs...)
+}
+
+// Close closes every cached pool and the default one.
+func (w *DBWrapper) Close() error {
+	w.mu.Lock()
+	pools := w.pools
+	w.pools = nil
+	w.mu.Unlock()
+	switchersMu.Lock()
+	delete(switchers, w)
+	switchersMu.Unlock()
+	errs := make([]error, 0, len(pools)+1)
+	for _, p := range pools {
+		errs = append(errs, p.DB.Close())
+	}
+	errs = append(errs, w.DB.Close())
+	return errors.Join(errs...)
+}
+
+// OnDatabase returns a connection to database when db can switch databases, and db otherwise.
+func OnDatabase(ctx context.Context, db DBTX, database string) (DBTX, error) {
+	if s, ok := db.(DatabaseSwitcher); ok {
+		return s.ForDatabase(ctx, database)
+	}
+	return db, nil
+}
+
+// ReleaseDatabase closes any pool db keeps to database.
+func ReleaseDatabase(db DBTX, database string) error {
+	if s, ok := db.(DatabaseSwitcher); ok {
+		return s.ReleaseDatabase(database)
+	}
+	return nil
 }
 
 func (w *DBWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -102,6 +205,27 @@ func (w *TxWrapper) QueryContext(ctx context.Context, query string, args ...any)
 	return w.tx.QueryContext(ctx, query, args...)
 }
 
+func (w *TxWrapper) PrepareContext(ctx context.Context, query string) (Stmt, error) {
+	stmt, err := w.tx.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return &StmtWrapper{stmt: stmt}, nil
+}
+
+// StmtWrapper wraps *sql.Stmt to satisfy the Stmt interface.
+type StmtWrapper struct {
+	stmt *sql.Stmt
+}
+
+func (w *StmtWrapper) QueryContext(ctx context.Context, args ...any) (Rows, error) {
+	return w.stmt.QueryContext(ctx, args...)
+}
+
+func (w *StmtWrapper) Close() error {
+	return w.stmt.Close()
+}
+
 func (w *TxWrapper) Commit() error {
 	return w.tx.Commit()
 }
@@ -112,8 +236,10 @@ func (w *TxWrapper) Rollback() error {
 
 // Compile-time checks.
 var _ DBTX = (*DBWrapper)(nil)
+var _ DatabaseSwitcher = (*DBWrapper)(nil)
 var _ ExecContext = (*DBWrapper)(nil)
 var _ Tx = (*TxWrapper)(nil)
+var _ Stmt = (*StmtWrapper)(nil)
 var _ Rows = (*sql.Rows)(nil)
 var _ Scanner = (*sql.Row)(nil)
 
@@ -170,30 +296,6 @@ func PrivilegesToSlice(ctx context.Context, set types.Set) []string {
 		raw[i] = strings.ToUpper(p)
 	}
 	return raw
-}
-
-// retryableErrorCodes contains PostgreSQL error codes that are transient and worth retrying.
-// See https://www.postgresql.org/docs/current/errcodes-appendix.html
-var retryableErrorCodes = map[pq.ErrorCode]bool{
-	"53300": true, // too_many_connections
-	"53400": true, // configuration_limit_exceeded
-	"40P01": true, // deadlock_detected
-	"40001": true, // serialization_failure
-	"08006": true, // connection_failure
-	"08001": true, // sqlclient_unable_to_establish_sqlconnection
-	"08004": true, // sqlserver_rejected_establishment_of_sqlconnection
-	"57P03": true, // cannot_connect_now (server starting up)
-}
-
-// IsRetryableError checks if a database error is transient and worth retrying.
-func IsRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if pqErr, ok := err.(*pq.Error); ok {
-		return retryableErrorCodes[pqErr.Code]
-	}
-	return false
 }
 
 // LogRollback rolls back a transaction and logs the error if rollback itself fails.
@@ -260,75 +362,71 @@ func NormalizePrivileges(privs []string) ([]string, error) {
 }
 
 // RoleOptions captures the set of option flags that can be applied to a role
-// (or user) via CREATE/ALTER ROLE ... WITH. Fields left empty or nil are
-// omitted from the output clause.
+// (or user) via CREATE/ALTER ROLE ... WITH. Nil or empty fields are omitted:
+// since PostgreSQL 16 an administrator without SUPERUSER may not even name
+// SUPERUSER or REPLICATION in ALTER ROLE.
 type RoleOptions struct {
-	// Login controls the LOGIN/NOLOGIN keyword. When nil, neither is emitted.
-	Login *bool
-	// Superuser, CreateDatabase, CreateRole, Replication always emit the
-	// positive or negative keyword.
-	Superuser       bool
-	CreateDatabase  bool
-	CreateRole      bool
-	Replication     bool
+	Login           *bool
+	Superuser       *bool
+	CreateDatabase  *bool
+	CreateRole      *bool
+	Replication     *bool
 	ConnectionLimit int64
-	// Password, if non-empty, emits PASSWORD <quoted>.
-	Password string
+	// Password, if non-empty, emits PASSWORD <quoted>; NullPassword emits PASSWORD NULL.
+	Password     string
+	NullPassword bool
 	// ValidUntil, if non-empty, emits VALID UNTIL <quoted>.
 	ValidUntil string
 }
 
 // BuildRoleOptions renders a " WITH ..." clause from the given role options.
-// Returns an empty string when no options would be emitted.
 func BuildRoleOptions(o RoleOptions) string {
 	var opts []string
-
-	if o.Login != nil {
-		if *o.Login {
-			opts = append(opts, "LOGIN")
-		} else {
-			opts = append(opts, "NOLOGIN")
+	flag := func(v *bool, yes, no string) {
+		switch {
+		case v == nil:
+		case *v:
+			opts = append(opts, yes)
+		default:
+			opts = append(opts, no)
 		}
 	}
-
-	if o.Superuser {
-		opts = append(opts, "SUPERUSER")
-	} else {
-		opts = append(opts, "NOSUPERUSER")
-	}
-
-	if o.CreateDatabase {
-		opts = append(opts, "CREATEDB")
-	} else {
-		opts = append(opts, "NOCREATEDB")
-	}
-
-	if o.CreateRole {
-		opts = append(opts, "CREATEROLE")
-	} else {
-		opts = append(opts, "NOCREATEROLE")
-	}
-
-	if o.Replication {
-		opts = append(opts, "REPLICATION")
-	} else {
-		opts = append(opts, "NOREPLICATION")
-	}
+	flag(o.Login, "LOGIN", "NOLOGIN")
+	flag(o.Superuser, "SUPERUSER", "NOSUPERUSER")
+	flag(o.CreateDatabase, "CREATEDB", "NOCREATEDB")
+	flag(o.CreateRole, "CREATEROLE", "NOCREATEROLE")
+	flag(o.Replication, "REPLICATION", "NOREPLICATION")
 
 	opts = append(opts, fmt.Sprintf("CONNECTION LIMIT %d", o.ConnectionLimit))
 
-	if o.Password != "" {
+	switch {
+	case o.Password != "":
 		opts = append(opts, fmt.Sprintf("PASSWORD %s", pq.QuoteLiteral(o.Password)))
+	case o.NullPassword:
+		opts = append(opts, "PASSWORD NULL")
 	}
 
 	if o.ValidUntil != "" {
 		opts = append(opts, fmt.Sprintf("VALID UNTIL %s", pq.QuoteLiteral(o.ValidUntil)))
 	}
 
-	if len(opts) == 0 {
-		return ""
-	}
 	return " WITH " + strings.Join(opts, " ")
+}
+
+// FlagChange returns the flag value to send: on create (state null) only a
+// true value, on alter only a changed one.
+func FlagChange(plan, state types.Bool) *bool {
+	v := plan.ValueBool()
+	if state.IsNull() || state.IsUnknown() {
+		if v {
+			return &v
+		}
+		return nil
+	}
+	if v == state.ValueBool() {
+		return nil
+	}
+	return &v
 }
 
 // QuoteConnStringValue escapes a value for inclusion in a libpq-style
@@ -341,31 +439,21 @@ func QuoteConnStringValue(v string) string {
 	return "'" + v + "'"
 }
 
-// RetryExec executes a SQL statement with retry logic for transient errors.
-// It retries up to 3 times with exponential backoff (1s, 2s, 4s).
-func RetryExec(ctx context.Context, db ExecContext, query string, args ...interface{}) (sql.Result, error) {
-	var result sql.Result
-	var err error
-
-	for attempt := 0; attempt < 3; attempt++ {
-		result, err = db.ExecContext(ctx, query, args...)
-		if err == nil || !IsRetryableError(err) {
-			return result, err
-		}
-
-		wait := time.Duration(1<<uint(attempt)) * time.Second
-		tflog.Warn(ctx, "Transient database error, retrying", map[string]interface{}{
-			"attempt": attempt + 1,
-			"error":   err.Error(),
-			"wait":    wait.String(),
-		})
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(wait):
+// ExecInTx runs the statements in one transaction; an empty list runs nothing.
+// It neither logs nor returns the SQL, which may hold a password.
+func ExecInTx(ctx context.Context, db DBTX, statements []string) error {
+	if len(statements) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer LogRollback(ctx, tx)
+	for _, stmt := range statements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
 		}
 	}
-
-	return result, err
+	return tx.Commit()
 }

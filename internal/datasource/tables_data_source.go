@@ -57,11 +57,11 @@ func (d *TablesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Optional:    true,
 			},
 			"like_pattern": schema.StringAttribute{
-				Description: "A SQL LIKE pattern to filter table names.",
+				Description: "A SQL LIKE pattern to filter table names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"not_like_pattern": schema.StringAttribute{
-				Description: "A SQL NOT LIKE pattern to exclude table names.",
+				Description: "A SQL NOT LIKE pattern to exclude table names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"table_type": schema.StringAttribute{
@@ -115,9 +115,19 @@ func (d *TablesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	query := `SELECT t.table_name, t.table_schema, t.table_type, COALESCE(pt.tableowner, '')
-		FROM information_schema.tables t
-		LEFT JOIN pg_catalog.pg_tables pt ON t.table_name = pt.tablename AND t.table_schema = pt.schemaname`
+	// The catalog, unlike information_schema, lists tables the current user has no
+	// privilege on, and gives views and foreign tables their owner.
+	query := `SELECT t.table_name, t.table_schema, t.table_type, t.owner FROM (
+		SELECT c.relname AS table_name, n.nspname AS table_schema,
+			CASE WHEN n.oid = pg_catalog.pg_my_temp_schema() THEN 'LOCAL TEMPORARY'
+			     WHEN c.relkind IN ('r', 'p') THEN 'BASE TABLE'
+			     WHEN c.relkind = 'v' THEN 'VIEW'
+			     ELSE 'FOREIGN' END AS table_type,
+			pg_catalog.pg_get_userbyid(c.relowner) AS owner
+		FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind IN ('r', 'p', 'v', 'f')
+		) t`
 	var conditions []string
 	var args []interface{}
 	argIdx := 1
@@ -157,7 +167,13 @@ func (d *TablesDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 
 	query += " ORDER BY t.table_schema, t.table_name"
 
-	rows, err := d.DB.QueryContext(ctx, query, args...)
+	db, err := common.OnDatabase(ctx, d.DB, state.Database.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error connecting to database", err.Error())
+		return
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying tables", fmt.Sprintf("Could not query tables: %s", err.Error()))
 		return

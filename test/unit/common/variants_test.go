@@ -3,12 +3,9 @@ package common_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
-	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
-	"github.com/lib/pq"
 )
 
 // ---------------------------------------------------------------------------
@@ -78,22 +75,27 @@ func TestBuildRoleOptions_OrderTableDriven(t *testing.T) {
 		tokens []string // expected, in the order they must appear
 	}{
 		{
-			"role_defaults_order",
+			"nil_flags_omitted",
 			common.RoleOptions{Login: &noLogin, ConnectionLimit: -1},
-			[]string{"NOLOGIN", "NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "CONNECTION LIMIT -1"},
+			[]string{"NOLOGIN", "CONNECTION LIMIT -1"},
 		},
 		{
-			"user_defaults_order_no_login_keyword",
-			common.RoleOptions{ConnectionLimit: -1},
+			"false_flags_negated_in_order",
+			common.RoleOptions{Superuser: &noLogin, CreateDatabase: &noLogin, CreateRole: &noLogin, Replication: &noLogin, ConnectionLimit: -1},
 			[]string{"NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "CONNECTION LIMIT -1"},
 		},
 		{
 			"all_flags_on_with_login",
 			common.RoleOptions{
-				Login: &yesLogin, Superuser: true, CreateDatabase: true,
-				CreateRole: true, Replication: true, ConnectionLimit: 100,
+				Login: &yesLogin, Superuser: &yesLogin, CreateDatabase: &yesLogin,
+				CreateRole: &yesLogin, Replication: &yesLogin, ConnectionLimit: 100,
 			},
 			[]string{"LOGIN", "SUPERUSER", "CREATEDB", "CREATEROLE", "REPLICATION", "CONNECTION LIMIT 100"},
+		},
+		{
+			"null_password_after_connection_limit",
+			common.RoleOptions{ConnectionLimit: 5, NullPassword: true, ValidUntil: "infinity"},
+			[]string{"CONNECTION LIMIT 5", "PASSWORD NULL", "VALID UNTIL 'infinity'"},
 		},
 		{
 			"password_appears_after_connection_limit",
@@ -188,72 +190,6 @@ func TestQuoteConnStringValue_TableDriven(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// RetryExec context cancellation
-// ---------------------------------------------------------------------------
-
-// slowRetryableExec always returns a retryable error, so RetryExec will try to
-// sleep between attempts. We cancel the context during the first sleep and
-// expect the function to return ctx.Err promptly.
-type slowRetryableExec struct {
-	calls int
-}
-
-func (s *slowRetryableExec) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
-	s.calls++
-	return nil, &pq.Error{Code: "40P01"} // deadlock_detected (retryable)
-}
-
-func TestRetryExec_ContextCanceledDuringBackoff(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	exec := &slowRetryableExec{}
-
-	// Cancel after 200ms, before the first retry sleep of 1s finishes.
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		cancel()
-	}()
-
-	start := time.Now()
-	_, err := common.RetryExec(ctx, exec, "SELECT 1")
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got %v", err)
-	}
-	// Should return quickly after cancellation, well before 2s.
-	if elapsed > 1500*time.Millisecond {
-		t.Errorf("expected early return after cancel, took %v", elapsed)
-	}
-	// At least one exec call must have happened; we should NOT have exhausted
-	// all 3 retries because the backoff was cut short.
-	if exec.calls < 1 {
-		t.Errorf("expected >=1 calls, got %d", exec.calls)
-	}
-	if exec.calls >= 3 {
-		t.Errorf("expected <3 calls due to cancellation, got %d", exec.calls)
-	}
-}
-
-func TestRetryExec_AlreadyCanceledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before calling
-
-	exec := &slowRetryableExec{}
-	_, err := common.RetryExec(ctx, exec, "SELECT 1")
-	if err == nil {
-		t.Fatal("expected error for pre-canceled context")
-	}
-	// First attempt runs once, returns retryable error, then the backoff
-	// select sees ctx.Done immediately and returns ctx.Err().
-	if exec.calls != 1 {
-		t.Errorf("expected exactly 1 call (no retries), got %d", exec.calls)
-	}
-}
-
 // TestDBWrapper_BeginTxErrorWraps exercises BeginTx's error-wrapping path via
 // a never-connecting host. The TxWrapper's Exec/Query/Commit/Rollback methods
 // themselves are thin pass-throughs and exercised by integration tests.
@@ -264,7 +200,7 @@ func TestDBWrapper_BeginTxErrorWraps(t *testing.T) {
 	}
 	defer db.Close()
 
-	w := common.NewDBWrapperWithOptions(db, false)
+	w := common.NewDBWrapper(db)
 	if _, err := w.BeginTx(context.Background(), nil); err == nil {
 		t.Error("expected BeginTx to fail against unreachable host")
 	}

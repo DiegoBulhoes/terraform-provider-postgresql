@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/datasource"
@@ -1309,7 +1310,10 @@ func TestQueryDataSource_Read_queryExecError(t *testing.T) {
 	mockTx := mocks.NewMockTx(ctrl)
 
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
-	mockTx.EXPECT().QueryContext(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("syntax error"))
+	mockStmt := mocks.NewMockStmt(ctrl)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(nil, fmt.Errorf("syntax error"))
+	mockStmt.EXPECT().Close().Return(nil)
 	mockTx.EXPECT().Rollback().Return(nil)
 
 	ctx := context.Background()
@@ -1341,7 +1345,10 @@ func TestQueryDataSource_Read_scanError(t *testing.T) {
 	mockRows := mocks.NewMockRows(ctrl)
 
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
-	mockTx.EXPECT().QueryContext(gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	mockStmt := mocks.NewMockStmt(ctrl)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(mockRows, nil)
+	mockStmt.EXPECT().Close().Return(nil)
 	mockRows.EXPECT().Columns().Return([]string{"col1"}, nil)
 	mockRows.EXPECT().Next().Return(true)
 	mockRows.EXPECT().Scan(gomock.Any()).Return(fmt.Errorf("scan failure during iteration"))
@@ -1367,7 +1374,10 @@ func TestQueryDataSource_Read_withCTE(t *testing.T) {
 	mockRows := mocks.NewMockRows(ctrl)
 
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
-	mockTx.EXPECT().QueryContext(gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	mockStmt := mocks.NewMockStmt(ctrl)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(mockRows, nil)
+	mockStmt.EXPECT().Close().Return(nil)
 	mockRows.EXPECT().Columns().Return([]string{"num"}, nil)
 	mockRows.EXPECT().Next().Return(true)
 	mockRows.EXPECT().Scan(gomock.Any()).DoAndReturn(func(dest ...any) error {
@@ -1480,7 +1490,10 @@ func TestQueryDataSource_Read_commitError(t *testing.T) {
 	mockRows := mocks.NewMockRows(ctrl)
 
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
-	mockTx.EXPECT().QueryContext(gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	mockStmt := mocks.NewMockStmt(ctrl)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(mockRows, nil)
+	mockStmt.EXPECT().Close().Return(nil)
 	mockRows.EXPECT().Columns().Return([]string{"num"}, nil)
 	mockRows.EXPECT().Next().Return(true)
 	mockRows.EXPECT().Scan(gomock.Any()).DoAndReturn(func(dest ...any) error {
@@ -1546,6 +1559,11 @@ func TestVersionDataSource_Read_success(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var got datasource.VersionDataSourceModel
+	resp.State.Get(ctx, &got)
+	if got.Major.ValueInt64() != 16 || got.Minor.ValueInt64() != 2 {
+		t.Errorf("expected 16.2, got %d.%d", got.Major.ValueInt64(), got.Minor.ValueInt64())
 	}
 }
 
@@ -1739,6 +1757,40 @@ func TestSchemasDataSource_Read_success(t *testing.T) {
 	}
 }
 
+func TestQueryDataSource_Read_duplicateColumn(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDB := mocks.NewMockDBTX(ctrl)
+	mockTx := mocks.NewMockTx(ctrl)
+	mockRows := mocks.NewMockRows(ctrl)
+	mockStmt := mocks.NewMockStmt(ctrl)
+
+	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(mockRows, nil)
+	mockStmt.EXPECT().Close().Return(nil)
+	// No Next: the duplicate is refused before any row is read.
+	mockRows.EXPECT().Columns().Return([]string{"id", "name", "id"}, nil)
+	mockRows.EXPECT().Close().Return(nil)
+	mockTx.EXPECT().Rollback().Return(nil)
+
+	ctx := context.Background()
+	s := querySchema()
+	req, resp := newReadReqResp(ctx, s, queryConfigValue(ctx, s, "SELECT a.id, a.name, b.id FROM a JOIN b USING (name)", "postgres"))
+
+	d := &datasource.QueryDataSource{DB: mockDB}
+	d.Read(ctx, req, resp)
+
+	found := false
+	for _, e := range resp.Diagnostics.Errors() {
+		if e.Summary() == "Duplicate column name" && strings.Contains(e.Detail(), `"id"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Duplicate column name' for id, got %v", resp.Diagnostics.Errors())
+	}
+}
+
 func TestQueryDataSource_Read_success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDB := mocks.NewMockDBTX(ctrl)
@@ -1746,7 +1798,10 @@ func TestQueryDataSource_Read_success(t *testing.T) {
 	mockRows := mocks.NewMockRows(ctrl)
 
 	mockDB.EXPECT().BeginTx(gomock.Any(), gomock.Any()).Return(mockTx, nil)
-	mockTx.EXPECT().QueryContext(gomock.Any(), gomock.Any()).Return(mockRows, nil)
+	mockStmt := mocks.NewMockStmt(ctrl)
+	mockTx.EXPECT().PrepareContext(gomock.Any(), gomock.Any()).Return(mockStmt, nil)
+	mockStmt.EXPECT().QueryContext(gomock.Any()).Return(mockRows, nil)
+	mockStmt.EXPECT().Close().Return(nil)
 	mockRows.EXPECT().Columns().Return([]string{"id", "name"}, nil)
 
 	gomock.InOrder(

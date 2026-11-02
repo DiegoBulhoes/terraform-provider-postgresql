@@ -51,11 +51,11 @@ func (d *RolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 		Description: "Lists PostgreSQL roles with optional filtering.",
 		Attributes: map[string]schema.Attribute{
 			"like_pattern": schema.StringAttribute{
-				Description: "A SQL LIKE pattern to filter role names.",
+				Description: "A SQL LIKE pattern to filter role names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"not_like_pattern": schema.StringAttribute{
-				Description: "A SQL NOT LIKE pattern to exclude role names.",
+				Description: "A SQL NOT LIKE pattern to exclude role names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"login_only": schema.BoolAttribute{

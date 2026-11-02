@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/lib/pq"
 )
 
@@ -45,6 +46,7 @@ type DatabaseResourceModel struct {
 	ConnectionLimit  types.Int64    `tfsdk:"connection_limit"`
 	AllowConnections types.Bool     `tfsdk:"allow_connections"`
 	IsTemplate       types.Bool     `tfsdk:"is_template"`
+	ForceDrop        types.Bool     `tfsdk:"force_drop"`
 	OID              types.Int64    `tfsdk:"oid"`
 	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
@@ -83,12 +85,18 @@ func (r *DatabaseResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 				},
 			},
 			"template": schema.StringAttribute{
-				Description: "The name of the template database from which to create the new database.",
+				Description: "The name of the template database from which to create the new database. Default: template0. The server does not record it, so after an import a change does not recreate the database.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("template0"),
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.RequiresReplaceIf(
+						func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+							resp.RequiresReplace = !req.StateValue.IsNull()
+						},
+						"Changing the template recreates the database, unless it was imported.",
+						"Changing the template recreates the database, unless it was imported.",
+					),
 				},
 			},
 			"encoding": schema.StringAttribute{
@@ -142,6 +150,12 @@ func (r *DatabaseResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 				Computed:    true,
 				Default:     booldefault.StaticBool(false),
 			},
+			"force_drop": schema.BoolAttribute{
+				Description: "If true, destroy terminates the sessions connected to the database (DROP DATABASE ... WITH (FORCE)). Default: false.",
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+			},
 			"oid": schema.Int64Attribute{
 				Description: "The OID of the database.",
 				Computed:    true,
@@ -153,6 +167,7 @@ func (r *DatabaseResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -242,7 +257,7 @@ func (r *DatabaseResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	// Read back the database to populate computed attributes
-	diags := r.ReadDatabase(ctx, &plan)
+	_, diags := r.ReadDatabase(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -258,16 +273,21 @@ func (r *DatabaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 		return
 	}
 
-	diags := r.ReadDatabase(ctx, &state)
-	if diags.HasError() {
-		// If the database no longer exists, remove it from state
-		for _, d := range diags {
-			if d.Summary() == "Database not found" {
-				resp.State.RemoveResource(ctx)
-				return
-			}
-		}
-		resp.Diagnostics.Append(diags...)
+	readTimeout, d := state.Timeouts.Read(ctx, common.DefaultTimeout)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	found, diags := r.ReadDatabase(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -308,6 +328,10 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 
 	// Update tablespace
 	if !plan.TablespaceName.Equal(state.TablespaceName) && common.IsSet(plan.TablespaceName) {
+		// SET TABLESPACE needs the database to have no sessions, the provider's own included.
+		if err := common.ReleaseDatabase(r.DB, plan.Name.ValueString()); err != nil {
+			tflog.Warn(ctx, "Closing connections to database failed", map[string]interface{}{"error": err.Error()})
+		}
 		query := fmt.Sprintf("ALTER DATABASE %s SET TABLESPACE %s", dbName, pq.QuoteIdentifier(plan.TablespaceName.ValueString()))
 		_, err := r.DB.ExecContext(ctx, query)
 		if err != nil {
@@ -344,7 +368,7 @@ func (r *DatabaseResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	// Read back the database to populate computed attributes
-	diags := r.ReadDatabase(ctx, &plan)
+	_, diags := r.ReadDatabase(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -370,6 +394,11 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 
 	dbName := state.Name.ValueString()
 
+	// The provider's own idle connections to this database would block the drop.
+	if err := common.ReleaseDatabase(r.DB, dbName); err != nil {
+		tflog.Warn(ctx, "Closing connections to database failed", map[string]interface{}{"error": err.Error()})
+	}
+
 	// If the database is a template, we must unset that first
 	if state.IsTemplate.ValueBool() {
 		query := fmt.Sprintf("ALTER DATABASE %s WITH IS_TEMPLATE = false", pq.QuoteIdentifier(dbName))
@@ -383,13 +412,18 @@ func (r *DatabaseResource) Delete(ctx context.Context, req resource.DeleteReques
 		}
 	}
 
-	query := fmt.Sprintf("DROP DATABASE %s", pq.QuoteIdentifier(dbName))
+	query := fmt.Sprintf("DROP DATABASE IF EXISTS %s", pq.QuoteIdentifier(dbName))
+	if state.ForceDrop.ValueBool() {
+		query += " WITH (FORCE)"
+	}
 	_, err := r.DB.ExecContext(ctx, query)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error deleting database",
-			fmt.Sprintf("Could not drop database %s: %s", dbName, err.Error()),
-		)
+		detail := fmt.Sprintf("Could not drop database %s: %s", dbName, err.Error())
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "55006" {
+			detail += "\nSet force_drop = true to terminate the sessions connected to it."
+		}
+		resp.Diagnostics.AddError("Error deleting database", detail)
 		return
 	}
 }
@@ -398,9 +432,8 @@ func (r *DatabaseResource) ImportState(ctx context.Context, req resource.ImportS
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
+// ReadDatabase reads the database into model; found is false when it does not exist.
+func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseResourceModel) (found bool, diags diag.Diagnostics) {
 	dbName := model.Name.ValueString()
 
 	var oid int64
@@ -418,6 +451,7 @@ func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseReso
 			d.oid,
 			r.rolname AS owner,
 			pg_catalog.pg_encoding_to_char(d.encoding) AS encoding,
+			pg_catalog.pg_char_to_encoding($2) = d.encoding AS encoding_matches,
 			d.datcollate AS lc_collate,
 			d.datctype AS lc_ctype,
 			d.datallowconn AS allow_connections,
@@ -430,10 +464,12 @@ func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseReso
 		WHERE d.datname = $1
 	`
 
-	err := r.DB.QueryRowContext(ctx, query, dbName).Scan(
+	var encodingMatches bool
+	err := r.DB.QueryRowContext(ctx, query, dbName, model.Encoding.ValueString()).Scan(
 		&oid,
 		&owner,
 		&encoding,
+		&encodingMatches,
 		&lcCollate,
 		&lcCtype,
 		&allowConnections,
@@ -443,19 +479,21 @@ func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseReso
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			diags.AddError("Database not found", fmt.Sprintf("Database %s does not exist.", dbName))
-			return diags
+			return false, diags
 		}
 		diags.AddError(
 			"Error reading database",
 			fmt.Errorf("read database %s: %w", dbName, err).Error(),
 		)
-		return diags
+		return true, diags
 	}
 
 	model.OID = types.Int64Value(oid)
 	model.Owner = types.StringValue(owner)
-	model.Encoding = types.StringValue(encoding)
+	// Keep the configured spelling (utf8, UTF-8) when the server reads it as the same encoding.
+	if !encodingMatches {
+		model.Encoding = types.StringValue(encoding)
+	}
 	model.LcCollate = types.StringValue(lcCollate)
 	model.LcCtype = types.StringValue(lcCtype)
 	model.AllowConnections = types.BoolValue(allowConnections)
@@ -463,11 +501,14 @@ func (r *DatabaseResource) ReadDatabase(ctx context.Context, model *DatabaseReso
 	model.IsTemplate = types.BoolValue(isTemplate)
 	model.TablespaceName = types.StringValue(tablespaceName)
 
-	// Template is not stored in pg_database directly; preserve the plan/state value.
-	// If it's unknown or null (e.g., during import), set the default.
-	if model.Template.IsNull() || model.Template.IsUnknown() {
-		model.Template = types.StringValue("template0")
+	// The template is not stored in pg_database, so the plan or state value is kept;
+	// it stays null after an import.
+	if model.Template.IsUnknown() {
+		model.Template = types.StringNull()
+	}
+	if model.ForceDrop.IsNull() || model.ForceDrop.IsUnknown() {
+		model.ForceDrop = types.BoolValue(false)
 	}
 
-	return diags
+	return true, diags
 }

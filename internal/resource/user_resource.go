@@ -2,10 +2,10 @@ package resource
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -43,6 +44,7 @@ type UserResourceModel struct {
 	ConnectionLimit types.Int64    `tfsdk:"connection_limit"`
 	ValidUntil      types.String   `tfsdk:"valid_until"`
 	Roles           types.List     `tfsdk:"roles"`
+	ReassignOwnedTo types.String   `tfsdk:"reassign_owned_to"`
 	OID             types.Int64    `tfsdk:"oid"`
 	Timeouts        timeouts.Value `tfsdk:"timeouts"`
 }
@@ -79,21 +81,25 @@ func (r *UserResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 				Description: "Whether the user is a superuser. Default: false.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"create_database": schema.BoolAttribute{
 				Description: "Whether the user can create databases. Default: false.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"create_role": schema.BoolAttribute{
 				Description: "Whether the user can create other roles. Default: false.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"replication": schema.BoolAttribute{
 				Description: "Whether the user can initiate streaming replication. Default: false.",
 				Optional:    true,
 				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"connection_limit": schema.Int64Attribute{
 				Description: "Maximum number of concurrent connections the user can make. -1 means no limit. Default: -1.",
@@ -115,9 +121,13 @@ func (r *UserResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"roles": schema.ListAttribute{
-				Description: "List of roles that this user is a member of.",
+				Description: "List of roles that this user is a member of. The order is not significant.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+			"reassign_owned_to": schema.StringAttribute{
+				Description: "On destroy, reassign the objects the user owns in the provider's database to this role and drop its privileges there (REASSIGN OWNED, DROP OWNED). Objects in other databases still block the drop.",
+				Optional:    true,
 			},
 			"oid": schema.Int64Attribute{
 				Description: "The OID of the user.",
@@ -127,6 +137,7 @@ func (r *UserResource) Schema(ctx context.Context, _ resource.SchemaRequest, res
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
 				Create: true,
+				Read:   true,
 				Update: true,
 				Delete: true,
 			}),
@@ -162,54 +173,18 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 	defer cancel()
 
 	userName := plan.Name.ValueString()
-	sqlStr := fmt.Sprintf("CREATE USER %s", pq.QuoteIdentifier(userName))
-	sqlStr += r.BuildUserOptions(ctx, &plan)
-
-	tx, err := r.DB.BeginTx(ctx, nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Error starting transaction", err.Error())
-		return
+	statements := []string{
+		fmt.Sprintf("CREATE USER %s", pq.QuoteIdentifier(userName)) + r.BuildUserOptions(ctx, &plan, nil),
 	}
-	defer common.LogRollback(ctx, tx)
-
-	_, err = tx.ExecContext(ctx, sqlStr)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error creating user",
-			fmt.Errorf("create user %s: %w", userName, err).Error(),
-		)
+	for _, memberOf := range common.StringListToSlice(ctx, plan.Roles) {
+		statements = append(statements, fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(memberOf), pq.QuoteIdentifier(userName)))
+	}
+	if err := common.ExecInTx(ctx, r.DB, statements); err != nil {
+		resp.Diagnostics.AddError("Error creating user", fmt.Sprintf("Could not create user %s: %s", userName, err.Error()))
 		return
 	}
 
-	// Grant role memberships
-	if common.IsSet(plan.Roles) {
-		var roles []string
-		resp.Diagnostics.Append(plan.Roles.ElementsAs(ctx, &roles, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		for _, memberOf := range roles {
-			grantSQL := fmt.Sprintf("GRANT %s TO %s",
-				pq.QuoteIdentifier(memberOf),
-				pq.QuoteIdentifier(userName),
-			)
-			_, err := tx.ExecContext(ctx, grantSQL)
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Error granting role membership",
-					fmt.Sprintf("Could not grant %s to %s: %s", memberOf, userName, err.Error()),
-				)
-				return
-			}
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		resp.Diagnostics.AddError("Error committing transaction", err.Error())
-		return
-	}
-
-	diags := r.ReadUser(ctx, &plan)
+	_, diags := r.ReadUser(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -225,15 +200,21 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	diags := r.ReadUser(ctx, &state)
-	if diags.HasError() {
-		for _, d := range diags {
-			if d.Summary() == "User not found" {
-				resp.State.RemoveResource(ctx)
-				return
-			}
-		}
-		resp.Diagnostics.Append(diags...)
+	readTimeout, d := state.Timeouts.Read(ctx, common.DefaultTimeout)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	found, diags := r.ReadUser(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -260,79 +241,27 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	oldName := state.Name.ValueString()
 	newName := plan.Name.ValueString()
 
+	var statements []string
 	if oldName != newName {
-		renameSQL := fmt.Sprintf("ALTER USER %s RENAME TO %s",
-			pq.QuoteIdentifier(oldName),
-			pq.QuoteIdentifier(newName),
-		)
-		_, err := r.DB.ExecContext(ctx, renameSQL)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error renaming user",
-				fmt.Sprintf("Could not rename user %s to %s: %s", oldName, newName, err.Error()),
-			)
-			return
-		}
+		statements = append(statements, fmt.Sprintf("ALTER USER %s RENAME TO %s",
+			pq.QuoteIdentifier(oldName), pq.QuoteIdentifier(newName)))
 	}
+	statements = append(statements, fmt.Sprintf("ALTER USER %s", pq.QuoteIdentifier(newName))+r.BuildUserOptions(ctx, &plan, &state))
 
-	alterSQL := fmt.Sprintf("ALTER USER %s", pq.QuoteIdentifier(newName))
-	alterSQL += r.BuildUserOptions(ctx, &plan)
-
-	_, err := r.DB.ExecContext(ctx, alterSQL)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error updating user",
-			fmt.Sprintf("Could not update user %s: %s", newName, err.Error()),
-		)
-		return
-	}
-
-	// Manage role memberships
-	var oldRoles []string
-	var newRoles []string
-	if common.IsSet(state.Roles) {
-		resp.Diagnostics.Append(state.Roles.ElementsAs(ctx, &oldRoles, false)...)
-	}
-	if common.IsSet(plan.Roles) {
-		resp.Diagnostics.Append(plan.Roles.ElementsAs(ctx, &newRoles, false)...)
-	}
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	toGrant, toRevoke := DiffRoles(oldRoles, newRoles)
-
+	toGrant, toRevoke := DiffRoles(common.StringListToSlice(ctx, state.Roles), common.StringListToSlice(ctx, plan.Roles))
 	for _, memberOf := range toGrant {
-		grantSQL := fmt.Sprintf("GRANT %s TO %s",
-			pq.QuoteIdentifier(memberOf),
-			pq.QuoteIdentifier(newName),
-		)
-		_, err := r.DB.ExecContext(ctx, grantSQL)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error granting role membership",
-				fmt.Sprintf("Could not grant %s to %s: %s", memberOf, newName, err.Error()),
-			)
-			return
-		}
+		statements = append(statements, fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(memberOf), pq.QuoteIdentifier(newName)))
 	}
-
 	for _, memberOf := range toRevoke {
-		revokeSQL := fmt.Sprintf("REVOKE %s FROM %s",
-			pq.QuoteIdentifier(memberOf),
-			pq.QuoteIdentifier(newName),
-		)
-		_, err := r.DB.ExecContext(ctx, revokeSQL)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error revoking role membership",
-				fmt.Sprintf("Could not revoke %s from %s: %s", memberOf, newName, err.Error()),
-			)
-			return
-		}
+		statements = append(statements, fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(memberOf), pq.QuoteIdentifier(newName)))
 	}
 
-	diags := r.ReadUser(ctx, &plan)
+	if err := common.ExecInTx(ctx, r.DB, statements); err != nil {
+		resp.Diagnostics.AddError("Error updating user", fmt.Sprintf("Could not update user %s: %s", oldName, err.Error()))
+		return
+	}
+
+	_, diags := r.ReadUser(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -357,95 +286,98 @@ func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	defer cancel()
 
 	userName := state.Name.ValueString()
-	sqlStr := fmt.Sprintf("DROP USER %s", pq.QuoteIdentifier(userName))
-	_, err := r.DB.ExecContext(ctx, sqlStr)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error deleting user",
-			fmt.Sprintf("Could not drop user %s: %s", userName, err.Error()),
-		)
+	statements := append(ReassignOwned(userName, state.ReassignOwnedTo), fmt.Sprintf("DROP USER %s", pq.QuoteIdentifier(userName)))
+	if err := common.ExecInTx(ctx, r.DB, statements); err != nil {
+		resp.Diagnostics.AddError("Error deleting user", DropRoleError(userName, err))
 		return
 	}
+}
+
+// ReassignOwned returns the statements that free a role of what it owns, when reassignTo is set.
+func ReassignOwned(roleName string, reassignTo types.String) []string {
+	if !common.IsSet(reassignTo) || reassignTo.ValueString() == "" {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(reassignTo.ValueString())),
+		fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName)),
+	}
+}
+
+// DropRoleError explains a failed DROP ROLE, pointing at reassign_owned_to when objects depend on it.
+func DropRoleError(roleName string, err error) string {
+	msg := fmt.Sprintf("Could not drop %s: %s", roleName, err.Error())
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "2BP01" {
+		msg += "\nSet reassign_owned_to to reassign its objects and drop its privileges first."
+	}
+	return msg
 }
 
 func (r *UserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 
-func (r *UserResource) BuildUserOptions(_ context.Context, model *UserResourceModel) string {
-	var password, validUntil string
-	if common.IsSet(model.Password) {
-		password = model.Password.ValueString()
+// BuildUserOptions renders the WITH clause; state is nil on create. Flags are
+// sent only when they change, and a removed password or expiry is cleared.
+func (r *UserResource) BuildUserOptions(_ context.Context, plan, state *UserResourceModel) string {
+	var prev *roleAttributes
+	prevPassword, prevValidUntil := types.StringNull(), types.StringNull()
+	if state != nil {
+		attrs := state.attributes()
+		prev = &attrs
+		prevPassword, prevValidUntil = state.Password, state.ValidUntil
 	}
-	if common.IsSet(model.ValidUntil) {
-		validUntil = model.ValidUntil.ValueString()
+	opts := plan.attributes().options(prev)
+
+	switch {
+	case common.IsSet(plan.Password):
+		opts.Password = plan.Password.ValueString()
+	case common.IsSet(prevPassword):
+		opts.NullPassword = true
 	}
-	return common.BuildRoleOptions(common.RoleOptions{
-		Superuser:       model.Superuser.ValueBool(),
-		CreateDatabase:  model.CreateDatabase.ValueBool(),
-		CreateRole:      model.CreateRole.ValueBool(),
-		Replication:     model.Replication.ValueBool(),
-		ConnectionLimit: model.ConnectionLimit.ValueInt64(),
-		Password:        password,
-		ValidUntil:      validUntil,
-	})
+	switch {
+	case common.IsSet(plan.ValidUntil):
+		opts.ValidUntil = plan.ValidUntil.ValueString()
+	case common.IsSet(prevValidUntil):
+		opts.ValidUntil = "infinity"
+	}
+	return common.BuildRoleOptions(opts)
 }
 
-func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) diag.Diagnostics {
-	var diags diag.Diagnostics
-
+// ReadUser reads the user into model; found is false when it does not exist.
+func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) (found bool, diags diag.Diagnostics) {
 	userName := model.Name.ValueString()
 
-	var oid int64
-	var rolCanLogin, rolSuper, rolCreateDB, rolCreateRole, rolReplication bool
-	var rolConnLimit int64
-	var rolValidUntil sql.NullString
-
-	const userQuery = `SELECT oid, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
-		rolreplication, rolconnlimit, rolvaliduntil
-		FROM pg_catalog.pg_roles WHERE rolname = $1`
-
-	err := r.DB.QueryRowContext(ctx, userQuery, userName).Scan(
-		&oid,
-		&rolCanLogin,
-		&rolSuper,
-		&rolCreateDB,
-		&rolCreateRole,
-		&rolReplication,
-		&rolConnLimit,
-		&rolValidUntil,
-	)
+	row, found, err := readRoleRow(ctx, r.DB, userName)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			diags.AddError("User not found", fmt.Sprintf("User %s does not exist.", userName))
-			return diags
-		}
 		diags.AddError("Error reading user", fmt.Errorf("read user %s: %w", userName, err).Error())
-		return diags
+		return true, diags
+	}
+	if !found {
+		return false, diags
 	}
 
-	if !rolCanLogin {
+	if !row.CanLogin {
 		diags.AddWarning(
 			"Role is not a user",
 			fmt.Sprintf("Role %s does not have LOGIN privilege. Consider using postgresql_role instead.", userName),
 		)
 	}
 
-	model.OID = types.Int64Value(oid)
-	model.Superuser = types.BoolValue(rolSuper)
-	model.CreateDatabase = types.BoolValue(rolCreateDB)
-	model.CreateRole = types.BoolValue(rolCreateRole)
-	model.Replication = types.BoolValue(rolReplication)
-	model.ConnectionLimit = types.Int64Value(rolConnLimit)
+	model.attributes().set(row)
+	oid := row.OID
 
-	if rolValidUntil.Valid {
-		model.ValidUntil = types.StringValue(rolValidUntil.String)
-	} else {
+	switch {
+	case !row.ValidUntil.Valid:
 		model.ValidUntil = types.StringNull()
+	case !SameInstant(model.ValidUntil.ValueString(), row.ValidUntil.String):
+		model.ValidUntil = types.StringValue(row.ValidUntil.String)
 	}
 
 	// Read role memberships
-	const memberQuery = `SELECT r.rolname
+	// Since PostgreSQL 16 a membership has one row per grantor.
+	const memberQuery = `SELECT DISTINCT r.rolname
 		FROM pg_catalog.pg_auth_members m
 		JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
 		WHERE m.member = $1
@@ -457,7 +389,7 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 			"Error reading role memberships",
 			fmt.Sprintf("Could not read memberships for user %s: %s", userName, err.Error()),
 		)
-		return diags
+		return true, diags
 	}
 	defer rows.Close() //nolint:errcheck
 
@@ -466,16 +398,18 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 		var memberOfName string
 		if err := rows.Scan(&memberOfName); err != nil {
 			diags.AddError("Error scanning role membership", fmt.Sprintf("Could not scan membership row for user %s: %s", userName, err.Error()))
-			return diags
+			return true, diags
 		}
 		memberOfRoles = append(memberOfRoles, types.StringValue(memberOfName))
 	}
 	if err := rows.Err(); err != nil {
 		diags.AddError("Error iterating role memberships", fmt.Sprintf("Error iterating memberships for user %s: %s", userName, err.Error()))
-		return diags
+		return true, diags
 	}
 
 	switch {
+	case len(memberOfRoles) > 0 && SameMembers(common.StringListToSlice(ctx, model.Roles), memberOfRoles):
+		// The configured order is kept.
 	case len(memberOfRoles) > 0:
 		rolesList, listDiags := types.ListValue(types.StringType, memberOfRoles)
 		diags.Append(listDiags...)
@@ -486,5 +420,51 @@ func (r *UserResource) ReadUser(ctx context.Context, model *UserResourceModel) d
 		model.Roles = types.ListNull(types.StringType)
 	}
 
-	return diags
+	return true, diags
+}
+
+// SameMembers reports whether names and values hold the same role names, in any order.
+func SameMembers(names []string, values []attr.Value) bool {
+	if len(names) != len(values) {
+		return false
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	for _, v := range values {
+		s, ok := v.(types.String)
+		if !ok || !set[s.ValueString()] {
+			return false
+		}
+	}
+	return true
+}
+
+var timestampLayouts = []string{
+	time.RFC3339Nano,
+	"2006-01-02 15:04:05.999999999Z07:00",
+	"2006-01-02 15:04:05.999999999Z07",
+	"2006-01-02T15:04:05.999999999Z07",
+}
+
+// SameInstant reports whether two timestamps with time zones name the same instant.
+func SameInstant(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ta, errA := parseTimestamp(a)
+	tb, errB := parseTimestamp(b)
+	return errA == nil && errB == nil && ta.Equal(tb)
+}
+
+func parseTimestamp(v string) (time.Time, error) {
+	var err error
+	for _, layout := range timestampLayouts {
+		var t time.Time
+		if t, err = time.Parse(layout, v); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, err
 }

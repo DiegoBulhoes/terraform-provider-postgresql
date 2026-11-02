@@ -43,6 +43,8 @@ func TestAccPostgresqlDatabase_basic(t *testing.T) {
 				ImportStateId:                        rName,
 				ImportStateVerify:                    true,
 				ImportStateVerifyIdentifierAttribute: "name",
+				// The server does not record the template, so an import leaves it null.
+				ImportStateVerifyIgnore: []string{"template"},
 			},
 		},
 	})
@@ -137,6 +139,8 @@ resource "postgresql_database" "test" {
 				ImportStateId:                        rName,
 				ImportStateVerify:                    true,
 				ImportStateVerifyIdentifierAttribute: "name",
+				// The server does not record the template, so an import leaves it null.
+				ImportStateVerifyIgnore: []string{"template"},
 			},
 		},
 	})
@@ -455,6 +459,8 @@ resource "postgresql_database" "mydb" {
 				ImportStateId:                        rName,
 				ImportStateVerify:                    true,
 				ImportStateVerifyIdentifierAttribute: "name",
+				// The server does not record the template, so an import leaves it null.
+				ImportStateVerifyIgnore: []string{"template"},
 			},
 		},
 	})

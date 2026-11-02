@@ -50,11 +50,11 @@ func (d *SchemasDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Optional:    true,
 			},
 			"like_pattern": schema.StringAttribute{
-				Description: "A SQL LIKE pattern to filter schema names.",
+				Description: "A SQL LIKE pattern to filter schema names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"not_like_pattern": schema.StringAttribute{
-				Description: "A SQL NOT LIKE pattern to exclude schema names.",
+				Description: "A SQL NOT LIKE pattern to exclude schema names. _ matches any one character and % any run; escape them with a backslash (\\_) to match them literally.",
 				Optional:    true,
 			},
 			"include_system_schemas": schema.BoolAttribute{
@@ -137,7 +137,13 @@ func (d *SchemasDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	query += " ORDER BY s.nspname"
 
-	rows, err := d.DB.QueryContext(ctx, query, args...)
+	db, err := common.OnDatabase(ctx, d.DB, state.Database.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Error connecting to database", err.Error())
+		return
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying schemas", fmt.Sprintf("Could not query schemas: %s", err.Error()))
 		return

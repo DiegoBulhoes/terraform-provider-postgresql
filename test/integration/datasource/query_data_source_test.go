@@ -4,11 +4,13 @@
 package datasource_test
 
 import (
+	"fmt"
 	"regexp"
 	"testing"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/test/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccPostgresqlQueryDataSource_basic(t *testing.T) {
@@ -250,7 +252,7 @@ func TestAccPostgresqlQueryDataSource_readOnlyProtection(t *testing.T) {
 				Config: `
 				data "postgresql_query" "test" {
 					database = "postgres"
-					query    = "SELECT 1; CREATE TABLE test_injection(id int)"
+					query    = "SELECT 1 AS id INTO test_injection"
 				}`,
 				ExpectError: regexp.MustCompile(`(?s)cannot execute .* in a read-only`),
 			},
@@ -378,6 +380,39 @@ data "postgresql_query" "extensions" {
 					resource.TestCheckResourceAttrSet("data.postgresql_query.extensions", "rows.0.extname"),
 					resource.TestCheckResourceAttrSet("data.postgresql_query.extensions", "rows.0.extversion"),
 				),
+			},
+		},
+	})
+}
+
+func TestAccPostgresqlQueryDataSource_commitCannotEscapeReadOnly(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testProviderFactories,
+		CheckDestroy: func(_ *terraform.State) error {
+			db, err := acctest.GetDB()
+			if err != nil {
+				return err
+			}
+			var exists bool
+			if err := db.QueryRow(`SELECT to_regclass('public.acctest_query_escape') IS NOT NULL`).Scan(&exists); err != nil {
+				return err
+			}
+			if exists {
+				_, _ = db.Exec(`DROP TABLE public.acctest_query_escape`)
+				return fmt.Errorf("a read-only query created table acctest_query_escape")
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: `
+data "postgresql_query" "test" {
+  database = "postgres"
+  query    = "SELECT 1 AS x; COMMIT; CREATE TABLE public.acctest_query_escape (id int)"
+}
+`,
+				ExpectError: regexp.MustCompile(`(?i)multiple commands`),
 			},
 		},
 	})

@@ -126,3 +126,20 @@ func TestAccPostgresql_fullStack(t *testing.T) {
 		},
 	})
 }
+
+func TestAccProvider_expectedVersionMismatch(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+				provider "postgresql" {
+					expected_version = "9"
+				}
+				data "postgresql_version" "test" {}`,
+				ExpectError: regexp.MustCompile(`expected PostgreSQL 9`),
+			},
+		},
+	})
+}

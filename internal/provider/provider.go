@@ -3,10 +3,12 @@ package provider
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -21,7 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var _ provider.Provider = (*PostgreSQLProvider)(nil)
@@ -45,7 +47,6 @@ type PostgreSQLProviderModel struct {
 	MaxIdleConnections types.Int64  `tfsdk:"max_idle_connections"`
 	ConnMaxLifetime    types.Int64  `tfsdk:"conn_max_lifetime"`
 	ConnMaxIdleTime    types.Int64  `tfsdk:"conn_max_idle_time"`
-	Superuser          types.Bool   `tfsdk:"superuser"`
 	ExpectedVersion    types.String `tfsdk:"expected_version"`
 }
 
@@ -144,12 +145,8 @@ func (p *PostgreSQLProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 					int64validator.AtLeast(0),
 				},
 			},
-			"superuser": schema.BoolAttribute{
-				Description: "Whether the provider connection user is a superuser. When false, the provider avoids operations that require superuser privileges. Useful for managed PostgreSQL services (RDS, Cloud SQL, Azure). Default: true.",
-				Optional:    true,
-			},
 			"expected_version": schema.StringAttribute{
-				Description: "Expected PostgreSQL server major version (e.g. \"16\", \"15\"). When set, the provider can skip features not available in older versions. If omitted, the provider detects the version automatically.",
+				Description: "Expected PostgreSQL server major version (e.g. \"16\"). When set, the provider fails to configure if the server runs another major version.",
 				Optional:    true,
 			},
 		},
@@ -161,6 +158,13 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	if v := os.Getenv("PGPORT"); !common.IsSet(config.Port) && v != "" {
+		if _, err := strconv.Atoi(v); err != nil {
+			resp.Diagnostics.AddError("Invalid PGPORT", fmt.Sprintf("PGPORT must be a port number, got %q.", v))
+			return
+		}
 	}
 
 	host := EnvOrDefault(config.Host, "PGHOST", "localhost")
@@ -177,27 +181,27 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 	maxIdleConns := EnvOrDefaultInt(config.MaxIdleConnections, "", 5)
 	connMaxLifetime := EnvOrDefaultInt(config.ConnMaxLifetime, "", 0)
 	connMaxIdleTime := EnvOrDefaultInt(config.ConnMaxIdleTime, "", 0)
-	superuser := EnvOrDefaultBool(config.Superuser, "", true)
 
-	params := []string{
-		"host=" + common.QuoteConnStringValue(host),
-		fmt.Sprintf("port=%d", port),
-		"user=" + common.QuoteConnStringValue(username),
-		"password=" + common.QuoteConnStringValue(password),
-		"dbname=" + common.QuoteConnStringValue(database),
-		"sslmode=" + common.QuoteConnStringValue(sslmode),
-		fmt.Sprintf("connect_timeout=%d", connectTimeout),
+	params := func(dbname string) []string {
+		p := []string{
+			"host=" + common.QuoteConnStringValue(host),
+			fmt.Sprintf("port=%d", port),
+			"user=" + common.QuoteConnStringValue(username),
+			"password=" + common.QuoteConnStringValue(password),
+			"dbname=" + common.QuoteConnStringValue(dbname),
+			fmt.Sprintf("connect_timeout=%d", connectTimeout),
+		}
+		if sslcert != "" {
+			p = append(p, "sslcert="+common.QuoteConnStringValue(sslcert))
+		}
+		if sslkey != "" {
+			p = append(p, "sslkey="+common.QuoteConnStringValue(sslkey))
+		}
+		if sslrootcert != "" {
+			p = append(p, "sslrootcert="+common.QuoteConnStringValue(sslrootcert))
+		}
+		return p
 	}
-	if sslcert != "" {
-		params = append(params, "sslcert="+common.QuoteConnStringValue(sslcert))
-	}
-	if sslkey != "" {
-		params = append(params, "sslkey="+common.QuoteConnStringValue(sslkey))
-	}
-	if sslrootcert != "" {
-		params = append(params, "sslrootcert="+common.QuoteConnStringValue(sslrootcert))
-	}
-	connStr := strings.Join(params, " ")
 
 	tflog.Debug(ctx, "Connecting to PostgreSQL", map[string]interface{}{
 		"host":     host,
@@ -207,35 +211,50 @@ func (p *PostgreSQLProvider) Configure(ctx context.Context, req provider.Configu
 		"sslmode":  sslmode,
 	})
 
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to create PostgreSQL client", err.Error())
+	pool := PoolSettings{
+		MaxOpen:        maxOpenConns,
+		MaxIdle:        maxIdleConns,
+		MaxLifetime:    time.Duration(connMaxLifetime) * time.Second,
+		MaxIdleTime:    time.Duration(connMaxIdleTime) * time.Second,
+		ConnectTimeout: time.Duration(connectTimeout) * time.Second,
+	}
+	key := fmt.Sprintf("%s|%s|%+v|%s", strings.Join(params(database), " "), sslmode, pool, config.ExpectedVersion.ValueString())
+	if cached, ok := configured.Load(key); ok {
+		resp.DataSourceData = cached
+		resp.ResourceData = cached
 		return
 	}
 
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(maxIdleConns)
-	if connMaxLifetime > 0 {
-		db.SetConnMaxLifetime(time.Duration(connMaxLifetime) * time.Second)
-	}
-	// Default to 5 seconds idle time to reclaim connections quickly.
-	idleTime := 5
-	if connMaxIdleTime > 0 {
-		idleTime = connMaxIdleTime
-	}
-	db.SetConnMaxIdleTime(time.Duration(idleTime) * time.Second)
-
-	pingCtx, cancel := context.WithTimeout(ctx, time.Duration(connectTimeout)*time.Second)
-	defer cancel()
-	if err := db.PingContext(pingCtx); err != nil {
+	db, err := Connect(ctx, params(database), sslmode, pool)
+	if err != nil {
 		resp.Diagnostics.AddError("Unable to connect to PostgreSQL", err.Error())
 		return
 	}
 
-	wrapper := common.NewDBWrapperWithOptions(db, superuser)
+	if common.IsSet(config.ExpectedVersion) {
+		if err := CheckServerVersion(ctx, db, config.ExpectedVersion.ValueString()); err != nil {
+			_ = db.Close()
+			resp.Diagnostics.AddError("Unexpected PostgreSQL version", err.Error())
+			return
+		}
+	}
+
+	wrapper := common.NewDBWrapper(db)
+	wrapper.Database = database
+	wrapper.Open = func(ctx context.Context, dbname string) (*sql.DB, error) {
+		return Connect(ctx, params(dbname), sslmode, pool)
+	}
+	if cached, loaded := configured.LoadOrStore(key, wrapper); loaded {
+		_ = wrapper.Close()
+		wrapper = cached.(*common.DBWrapper)
+	}
 	resp.DataSourceData = wrapper
 	resp.ResourceData = wrapper
 }
+
+// configured keeps one connection wrapper per configuration. Terraform configures
+// a provider once per process, but tests configure it for every command in one.
+var configured sync.Map
 
 func (p *PostgreSQLProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
@@ -244,6 +263,9 @@ func (p *PostgreSQLProvider) Resources(_ context.Context) []func() resource.Reso
 		pgresource.NewDatabaseResource,
 		pgresource.NewSchemaResource,
 		pgresource.NewGrantResource,
+		pgresource.NewRoleMembershipResource,
+		pgresource.NewExtensionResource,
+		pgresource.NewDefaultPrivilegesResource,
 	}
 }
 
@@ -287,18 +309,95 @@ func EnvOrDefaultInt(val types.Int64, envVar string, defaultVal int) int {
 	return defaultVal
 }
 
-// EnvOrDefaultBool returns the Terraform attribute value, or falls back to the
-// given environment variable, or finally the default value.
-func EnvOrDefaultBool(val types.Bool, envVar string, defaultVal bool) bool {
-	if common.IsSet(val) {
-		return val.ValueBool()
+// PoolSettings holds the connection pool options of the provider.
+type PoolSettings struct {
+	MaxOpen        int
+	MaxIdle        int
+	MaxLifetime    time.Duration
+	MaxIdleTime    time.Duration
+	ConnectTimeout time.Duration
+}
+
+// SSLModeAttempts returns the sslmode values to try in order. lib/pq has no
+// "prefer" or "allow", so they are emulated as in libpq.
+func SSLModeAttempts(sslmode string) []string {
+	switch sslmode {
+	case "prefer":
+		return []string{"require", "disable"}
+	case "allow":
+		return []string{"disable", "require"}
+	default:
+		return []string{sslmode}
 	}
-	if envVar != "" {
-		if v := os.Getenv(envVar); v != "" {
-			if b, err := strconv.ParseBool(v); err == nil {
-				return b
-			}
+}
+
+// Connect opens and pings a pool, falling back to the next sslmode only when
+// the server refused the previous one.
+func Connect(ctx context.Context, params []string, sslmode string, pool PoolSettings) (*sql.DB, error) {
+	attempts := SSLModeAttempts(sslmode)
+	var lastErr error
+	for i, mode := range attempts {
+		db, err := openPool(ctx, append(append([]string{}, params...), "sslmode="+mode), pool)
+		if err == nil {
+			return db, nil
 		}
+		lastErr = err
+		if i == len(attempts)-1 || !sslRefused(mode, err) {
+			break
+		}
+		tflog.Debug(ctx, "Server refused sslmode, trying the next one", map[string]interface{}{"sslmode": mode})
 	}
-	return defaultVal
+	return nil, lastErr
+}
+
+func sslRefused(mode string, err error) bool {
+	if mode == "require" {
+		return errors.Is(err, pq.ErrSSLNotSupported)
+	}
+	// pg_hba.conf rejects a plain connection with invalid_authorization_specification.
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "28000"
+}
+
+func openPool(ctx context.Context, params []string, pool PoolSettings) (*sql.DB, error) {
+	db, err := sql.Open("postgres", strings.Join(params, " "))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(pool.MaxOpen)
+	db.SetMaxIdleConns(pool.MaxIdle)
+	if pool.MaxLifetime > 0 {
+		db.SetConnMaxLifetime(pool.MaxLifetime)
+	}
+	// Default to 5 seconds idle time to reclaim connections quickly.
+	idleTime := 5 * time.Second
+	if pool.MaxIdleTime > 0 {
+		idleTime = pool.MaxIdleTime
+	}
+	db.SetConnMaxIdleTime(idleTime)
+
+	pingCtx, cancel := context.WithTimeout(ctx, pool.ConnectTimeout)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// CheckServerVersion fails when the server's major version is not expected
+// (a major version such as "16", or "16.2" of which only 16 counts).
+func CheckServerVersion(ctx context.Context, db *sql.DB, expected string) error {
+	want, err := strconv.Atoi(strings.SplitN(strings.TrimSpace(expected), ".", 2)[0])
+	if err != nil {
+		return fmt.Errorf("expected_version %q is not a major version number", expected)
+	}
+	var num int
+	if err := db.QueryRowContext(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&num); err != nil {
+		return err
+	}
+	if got := num / 10000; got != want {
+		return fmt.Errorf("the server runs PostgreSQL %d, expected PostgreSQL %d", got, want)
+	}
+	return nil
 }

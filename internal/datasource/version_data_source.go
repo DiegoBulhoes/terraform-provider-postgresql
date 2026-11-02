@@ -3,7 +3,6 @@ package datasource
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strconv"
 
 	"github.com/DiegoBulhoes/terraform-provider-postgresql/internal/common"
@@ -72,8 +71,6 @@ func (d *VersionDataSource) Configure(_ context.Context, req datasource.Configur
 	d.DB = db
 }
 
-var VersionRegexp = regexp.MustCompile(`(\d+)\.(\d+)`)
-
 func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var state VersionDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &state)...)
@@ -89,17 +86,6 @@ func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 	state.Version = types.StringValue(versionStr)
 
-	matches := VersionRegexp.FindStringSubmatch(versionStr)
-	if len(matches) >= 3 {
-		major, _ := strconv.ParseInt(matches[1], 10, 64)
-		minor, _ := strconv.ParseInt(matches[2], 10, 64)
-		state.Major = types.Int64Value(major)
-		state.Minor = types.Int64Value(minor)
-	} else {
-		state.Major = types.Int64Value(0)
-		state.Minor = types.Int64Value(0)
-	}
-
 	var serverVersionNum string
 	err = d.DB.QueryRowContext(ctx, `SHOW server_version_num`).Scan(&serverVersionNum)
 	if err != nil {
@@ -113,6 +99,9 @@ func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 	state.ServerVersionNum = types.Int64Value(num)
+	// version() also names the compiler version, and a beta has no minor; server_version_num is exact.
+	state.Major = types.Int64Value(num / 10000)
+	state.Minor = types.Int64Value(num % 10000)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
