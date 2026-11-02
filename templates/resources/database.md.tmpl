@@ -9,9 +9,9 @@ description: |-
 
 Manages a PostgreSQL database.
 
-!> **Warning:** Destroying this resource runs `DROP DATABASE`. PostgreSQL refuses that while any connection to the database is open, so close them first.
+!> **Warning:** Destroying this resource runs `DROP DATABASE`. PostgreSQL refuses that while any session is connected to the database, unless `force_drop = true` terminates them first. The provider closes its own connections before the drop.
 
-~> **Note:** Changing `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` destroys and recreates the database.
+~> **Note:** Changing `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` destroys and recreates the database. The server does not record the template, so after an import a `template` change only updates state. `encoding` accepts any spelling the server does, such as `utf8` or `UTF-8`.
 
 ## Example Usage
 

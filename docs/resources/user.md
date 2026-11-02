@@ -1,5 +1,5 @@
 ---
-page_title: "Resource postgresql_user - terraform-provider-postgresql"
+page_title: "Resource postgresql_user - postgresql"
 subcategory: "Roles & Permissions"
 description: |-
   Manages a PostgreSQL user (a role with LOGIN privilege).
@@ -11,22 +11,26 @@ Manages a PostgreSQL user. A user is a role with the `LOGIN` privilege, so it ca
 
 Define permission groups with `postgresql_role`, then assign them here through the `roles` attribute.
 
-~> **Password handling.** The `password` attribute is marked sensitive, but it still goes into Terraform state. Use a state backend that encrypts data at rest, such as S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud, and limit who can read it. PostgreSQL **never returns the password**, so after an import it is missing from state and the next plan shows it as changed.
+~> The `password` attribute is marked sensitive, but it still goes into Terraform state. Use a state backend that encrypts data at rest, such as S3 with SSE-KMS, GCS with CMEK, or Terraform Cloud, and limit who can read it. PostgreSQL never returns the password, so after an import it is missing from state and the next plan shows it as changed.
 
-## `valid_until` Format
+## `valid_until` format
 
-The `valid_until` attribute sets when the password expires. These formats are accepted, and checked at plan time:
+The `valid_until` attribute sets when the password expires. The provider accepts these formats and checks them at plan time:
 
 - RFC 3339 with `T` separator: `"2025-12-31T23:59:59Z"`
 - RFC 3339 with timezone offset: `"2025-12-31T23:59:59-03:00"`
 - SQL timestamp with space separator: `"2025-12-31 23:59:59"`
-- Unset or `null`: the password never expires (PostgreSQL `infinity`)
+- Unset or `null`: the password never expires (PostgreSQL `infinity`). Removing `valid_until` from the config clears the expiry.
 
-The value goes to PostgreSQL as `VALID UNTIL <quoted>` and the server parses it. A format the server rejects shows up as an error during apply.
+The value goes to PostgreSQL as `VALID UNTIL <quoted>` and the server parses it. A format the server rejects shows up as an error during apply. The server returns the time in its own time zone; the provider keeps your value when both name the same instant.
 
-## Role Memberships
+## Role memberships
 
-The `roles` attribute makes the user a member of every role listed. On update, the provider compares old and new, then runs only the `GRANT ... TO` and `REVOKE ... FROM` statements it needs. Duplicates are dropped. Changing the list does **not** recreate the user.
+The `roles` attribute makes the user a member of every role listed. On update, the provider compares old and new, then runs only the `GRANT ... TO` and `REVOKE ... FROM` statements it needs. Duplicates are dropped, the order of the list does not matter, and changing it does not recreate the user.
+
+## Destroy
+
+`DROP USER` fails while the user owns objects or holds privileges. Set `reassign_owned_to` to run `REASSIGN OWNED BY` and `DROP OWNED BY` first, in the provider's database.
 
 ## Example Usage
 
@@ -112,8 +116,9 @@ resource "postgresql_user" "service" {
 - `create_database` (Boolean) Whether the user can create databases. Default: false.
 - `create_role` (Boolean) Whether the user can create other roles. Default: false.
 - `password` (String, Sensitive) The password for the user.
+- `reassign_owned_to` (String) On destroy, reassign the objects the user owns in the provider's database to this role and drop its privileges there (REASSIGN OWNED, DROP OWNED). Objects in other databases still block the drop.
 - `replication` (Boolean) Whether the user can initiate streaming replication. Default: false.
-- `roles` (List of String) List of roles that this user is a member of.
+- `roles` (List of String) List of roles that this user is a member of. The order is not significant.
 - `superuser` (Boolean) Whether the user is a superuser. Default: false.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `valid_until` (String) Timestamp until which the user's password is valid. If omitted, the password never expires. Format: RFC 3339 (e.g. 2025-12-31T23:59:59Z).
@@ -129,6 +134,7 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import

@@ -1,5 +1,5 @@
 ---
-page_title: "Resource postgresql_role - terraform-provider-postgresql"
+page_title: "Resource postgresql_role - postgresql"
 subcategory: "Roles & Permissions"
 description: |-
   Manages a PostgreSQL role (permission group).
@@ -11,7 +11,7 @@ Manages a PostgreSQL role as a permission group. A role holds a set of privilege
 
 ~> **Note:** Roles created here always have `NOLOGIN`. For users that log in with a password, use `postgresql_user`.
 
-## Inline `privilege` Blocks vs. Separate `postgresql_grant` Resources
+## Inline `privilege` blocks vs. separate `postgresql_grant` resources
 
 You can attach privileges to a role in two ways:
 
@@ -22,7 +22,7 @@ You can attach privileges to a role in two ways:
 
 Use inline blocks when the privileges are simple and change together. Use `postgresql_grant` when you need finer control, such as schema-level grants shared by many roles, or delegation with `with_grant_option`.
 
-~> **Privilege validation.** Keywords in `privilege.privileges` are checked against the same allowlist as `postgresql_grant`. The [grant resource docs](grant) have the full list.
+~> Keywords in `privilege.privileges` are checked against the same allowlist as `postgresql_grant`. The [grant resource docs](grant) have the full list.
 
 ## Example Usage
 
@@ -109,6 +109,7 @@ resource "postgresql_role" "reports" {
 - `create_database` (Boolean) Whether the role can create databases. Default: false.
 - `create_role` (Boolean) Whether the role can create other roles. Default: false.
 - `privilege` (Block List) Privilege grants for this role. Each block defines a set of privileges on a specific object type. (see [below for nested schema](#nestedblock--privilege))
+- `reassign_owned_to` (String) On destroy, reassign the objects the role owns in the provider's database to this role and drop its privileges there (REASSIGN OWNED, DROP OWNED). Objects in other databases still block the drop.
 - `replication` (Boolean) Whether the role can initiate streaming replication. Default: false.
 - `superuser` (Boolean) Whether the role is a superuser. Default: false.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
@@ -123,12 +124,12 @@ resource "postgresql_role" "reports" {
 Required:
 
 - `object_type` (String) The object type to grant privileges on: database, schema, table, sequence, or function.
-- `privileges` (Set of String) The set of privileges to grant (e.g. SELECT, INSERT, UPDATE, DELETE, USAGE, CREATE, ALL).
+- `privileges` (Set of String) The set of privileges to grant (e.g. SELECT, INSERT, UPDATE, DELETE, USAGE, CREATE, ALL). Case-insensitive.
 
 Optional:
 
-- `database` (String) The database for database-level grants.
-- `objects` (List of String) Specific object names. If empty, grants on ALL objects of the given type in the schema.
+- `database` (String) The database of the grant. Schema, table, sequence and function privileges run in this database, which defaults to the provider's database.
+- `objects` (List of String) Specific object names; a function is named alone (all overloads) or with its argument types, as in f(integer). If empty, grants on ALL objects of the given type in the schema.
 - `schema` (String) The schema containing the objects.
 
 
@@ -139,6 +140,7 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
@@ -149,4 +151,8 @@ Import a role by its name:
 terraform import postgresql_role.readonly readonly
 ```
 
-Import does **not** recover inline `privilege` blocks. After an import, run `terraform plan`: the provider re-applies the `privilege` blocks from your config.
+Import does not recover inline `privilege` blocks. After an import, run `terraform plan`: the provider re-applies the `privilege` blocks from your config. Once applied, the blocks are read back on refresh, and a privilege revoked outside Terraform shows up as a change.
+
+## Destroy
+
+`DROP ROLE` fails while the role owns objects or holds privileges. Set `reassign_owned_to` to run `REASSIGN OWNED BY` and `DROP OWNED BY` first, in the provider's database. A privilege block on another database is revoked there.

@@ -1,5 +1,5 @@
 ---
-page_title: "Resource postgresql_schema - terraform-provider-postgresql"
+page_title: "Resource postgresql_schema - postgresql"
 subcategory: "Database Objects"
 description: |-
   Manages a PostgreSQL schema.
@@ -9,15 +9,16 @@ description: |-
 
 Manages a PostgreSQL schema.
 
-~> **Note:** The `database` attribute does not open a second connection. The provider always works on the database set in the provider block. To manage schemas in another database, configure a second provider instance.
+The schema is created in the database set in `database`, or in the provider's database when it is not set.
 
-## Behavior Details
+## Behavior details
 
-- **Rename.** Changing `name` runs `ALTER SCHEMA ... RENAME TO ...` and keeps the schema contents: tables, views, and functions.
-- **Owner change.** Changing `owner` runs `ALTER SCHEMA ... OWNER TO ...`. The connected user must own the schema or be a superuser, and must belong to the new owner role.
-- **`if_not_exists = true`.** Adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. This helps when other automation shares the database: later applies still manage the schema, with owner changes and renames, but the first apply does not fail if someone else created it.
-- **Drop behavior.** Delete runs a plain `DROP SCHEMA`, never `CASCADE`. If the schema still holds objects, the drop fails. Remove the contents first, or manage them as Terraform resources so they are destroyed in the right order.
-- **Drift detection.** On refresh, the provider reads `schema_owner` again from `information_schema.schemata`. If the schema is gone, it is removed from state.
+- Changing `name` runs `ALTER SCHEMA ... RENAME TO ...` and keeps the schema contents: tables, views, and functions.
+- Changing `owner` runs `ALTER SCHEMA ... OWNER TO ...`. The connected user must own the schema or be a superuser, and must belong to the new owner role.
+- When `name` and `owner` change together, both changes run in one transaction: if one fails, neither applies.
+- `if_not_exists = true` adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. This helps when other automation shares the database: the resource adopts an existing schema, gives it the configured `owner`, and drops it on destroy.
+- Delete runs `DROP SCHEMA`, with `CASCADE` only when `drop_cascade = true`. Without it, a schema that still holds objects is not dropped and the error says so.
+- On refresh, the provider reads the owner from `pg_namespace`, which lists the schema even when the connected user has no privilege on it. If the schema is gone, the provider removes it from state.
 
 ## Example Usage
 
@@ -73,9 +74,8 @@ resource "postgresql_schema" "payments" {
 ### Optional
 
 - `database` (String) The database where the schema resides. Defaults to the provider's configured database. Changing this forces a new resource.
-
-~> **Note:** The provider uses its configured connection and does not open a separate connection to this database. Ensure the provider is configured to connect to the correct database.
-- `if_not_exists` (Boolean) If true, use IF NOT EXISTS when creating the schema.
+- `drop_cascade` (Boolean) If true, destroy drops the schema with CASCADE, deleting every object in it. Default: false.
+- `if_not_exists` (Boolean) If true, use IF NOT EXISTS when creating the schema. An existing schema is adopted, given the configured owner, and dropped on destroy.
 - `owner` (String) The role that owns the schema.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
@@ -86,6 +86,7 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import

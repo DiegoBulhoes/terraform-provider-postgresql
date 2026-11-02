@@ -9,15 +9,16 @@ description: |-
 
 Manages a PostgreSQL schema.
 
-~> **Note:** The `database` attribute does not open a second connection. The provider always works on the database set in the provider block. To manage schemas in another database, configure a second provider instance.
+The schema is created in the database set in `database`, or in the provider's database when it is not set.
 
-## Behavior Details
+## Behavior details
 
-- **Rename.** Changing `name` runs `ALTER SCHEMA ... RENAME TO ...` and keeps the schema contents: tables, views, and functions.
-- **Owner change.** Changing `owner` runs `ALTER SCHEMA ... OWNER TO ...`. The connected user must own the schema or be a superuser, and must belong to the new owner role.
-- **`if_not_exists = true`.** Adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. This helps when other automation shares the database: later applies still manage the schema, with owner changes and renames, but the first apply does not fail if someone else created it.
-- **Drop behavior.** Delete runs a plain `DROP SCHEMA`, never `CASCADE`. If the schema still holds objects, the drop fails. Remove the contents first, or manage them as Terraform resources so they are destroyed in the right order.
-- **Drift detection.** On refresh, the provider reads `schema_owner` again from `information_schema.schemata`. If the schema is gone, it is removed from state.
+- Changing `name` runs `ALTER SCHEMA ... RENAME TO ...` and keeps the schema contents: tables, views, and functions.
+- Changing `owner` runs `ALTER SCHEMA ... OWNER TO ...`. The connected user must own the schema or be a superuser, and must belong to the new owner role.
+- When `name` and `owner` change together, both changes run in one transaction: if one fails, neither applies.
+- `if_not_exists = true` adds `IF NOT EXISTS` to the `CREATE SCHEMA` statement. This helps when other automation shares the database: the resource adopts an existing schema, gives it the configured `owner`, and drops it on destroy.
+- Delete runs `DROP SCHEMA`, with `CASCADE` only when `drop_cascade = true`. Without it, a schema that still holds objects is not dropped and the error says so.
+- On refresh, the provider reads the owner from `pg_namespace`, which lists the schema even when the connected user has no privilege on it. If the schema is gone, the provider removes it from state.
 
 ## Example Usage
 

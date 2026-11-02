@@ -35,8 +35,8 @@ provider "postgresql" {
   alias = "from_env"
 }
 
-# Managed service (RDS / Cloud SQL / Azure Database): superuser = false skips
-# operations that require superuser privileges on the server.
+# Managed service (RDS / Cloud SQL / Azure Database): a user with CREATEROLE
+# but not superuser works, since role flags are sent only when they change.
 provider "postgresql" {
   alias    = "managed"
   host     = "myapp.abc123.us-east-1.rds.amazonaws.com"
@@ -45,8 +45,6 @@ provider "postgresql" {
   password = var.db_password
   database = "postgres"
   sslmode  = "require"
-
-  superuser = false
 }
 
 # TLS with client certificates. Paths containing spaces, single quotes, or
@@ -88,7 +86,7 @@ variable "db_password" {
 
 You can configure the provider with attributes or with environment variables:
 
-| Attribute              | Environment Variable | Default     |
+| Attribute              | Environment variable | Default     |
 |------------------------|----------------------|-------------|
 | `host`                 | `PGHOST`             | `localhost` |
 | `port`                 | `PGPORT`             | `5432`      |
@@ -99,29 +97,33 @@ You can configure the provider with attributes or with environment variables:
 | `sslcert`              | `PGSSLCERT`          | (empty)     |
 | `sslkey`               | `PGSSLKEY`           | (empty)     |
 | `sslrootcert`          | `PGSSLROOTCERT`      | (empty)     |
-| `connect_timeout`      | —                    | `30`        |
-| `max_connections`      | —                    | `10`        |
-| `max_idle_connections` | —                    | `5`         |
-| `conn_max_lifetime`    | —                    | `0` (no limit) |
-| `conn_max_idle_time`   | —                    | `0` (no limit) |
-| `superuser`            | —                    | `true`      |
+| `connect_timeout`      | (none)               | `30`        |
+| `max_connections`      | (none)               | `10`        |
+| `max_idle_connections` | (none)               | `5`         |
+| `conn_max_lifetime`    | (none)               | `0` (no limit) |
+| `conn_max_idle_time`   | (none)               | `0` (no limit) |
 
 The provider falls back to the environment variable when the attribute is not set.
 
-~> **Special characters in credentials.** Passwords, paths, and SSL values that contain spaces, single quotes, or backslashes are escaped for you in the libpq connection string. Do not quote or escape them yourself in the Terraform config.
+~> The provider escapes passwords, paths, and SSL values that contain spaces, single quotes, or backslashes in the libpq connection string. Do not quote or escape them yourself in the Terraform config.
 
-~> **Managed PostgreSQL services.** If your user is not a superuser, as on RDS, Cloud SQL, or Azure Database, set `superuser = false` in the provider block. The provider then skips the operations that need superuser rights.
+~> In `sslmode`, `prefer` tries SSL first and connects without it when the server does not offer it; `allow` does the reverse. The other modes connect only as they say.
 
-## Known Limitations
+~> On managed services such as RDS, Cloud SQL, or Azure Database, a user with `CREATEROLE` but not superuser can manage roles and users: the provider sends `SUPERUSER`, `REPLICATION` and the other role flags only when they change.
 
-- The `database` attribute on `postgresql_schema` and `postgresql_grant` does not open a second connection. The provider always works on the database set in the provider block.
+~> Resources and data sources with a `database` attribute open a connection pool to that database on the same server, with the same credentials and pool settings.
+
+## Known limitations
+
 - PostgreSQL never returns a user's password, so after an import the password is missing from state.
-- `postgresql_grant` on ALL TABLES, SEQUENCES, or FUNCTIONS does not track single objects for drift. Grants on named objects, databases, and schemas are checked in full.
+- `reassign_owned_to` on `postgresql_role` and `postgresql_user` frees the role only in the provider's database. Objects it owns in other databases still block the drop.
+- `postgresql_query` runs in a read-only transaction and refuses several statements in one string, but a read-only query can still call a function with side effects, such as `pg_terminate_backend`.
 
 ## Compatibility
 
-| PostgreSQL Version | Status          |
+| PostgreSQL version | Status          |
 |--------------------|-----------------|
+| 18                 | Fully supported |
 | 17                 | Fully supported |
 | 16                 | Fully supported |
 | 15                 | Fully supported |
@@ -137,7 +139,7 @@ The provider falls back to the environment variable when the attribute is not se
 - `conn_max_lifetime` (Number) Maximum lifetime of a connection in seconds. Connections older than this are closed before reuse. 0 means no limit. Default: 0.
 - `connect_timeout` (Number) Connection timeout in seconds. Default: 30.
 - `database` (String) Default database to connect to. Default: postgres. Can also be set with the PGDATABASE environment variable.
-- `expected_version` (String) Expected PostgreSQL server major version (e.g. "16", "15"). When set, the provider can skip features not available in older versions. If omitted, the provider detects the version automatically.
+- `expected_version` (String) Expected PostgreSQL server major version (e.g. "16"). When set, the provider fails to configure if the server runs another major version.
 - `host` (String) PostgreSQL server hostname. Can also be set with the PGHOST environment variable.
 - `max_connections` (Number) Maximum number of open connections to the database. Default: 10.
 - `max_idle_connections` (Number) Maximum number of idle connections in the pool. Default: 5.
@@ -147,5 +149,4 @@ The provider falls back to the environment variable when the attribute is not se
 - `sslkey` (String) Path to the SSL client private key. Can also be set with the PGSSLKEY environment variable.
 - `sslmode` (String) SSL mode (disable, allow, prefer, require, verify-ca, verify-full). Default: prefer. Can also be set with the PGSSLMODE environment variable.
 - `sslrootcert` (String) Path to the SSL root certificate authority. Can also be set with the PGSSLROOTCERT environment variable.
-- `superuser` (Boolean) Whether the provider connection user is a superuser. When false, the provider avoids operations that require superuser privileges. Useful for managed PostgreSQL services (RDS, Cloud SQL, Azure). Default: true.
 - `username` (String) PostgreSQL user. Can also be set with the PGUSER environment variable.

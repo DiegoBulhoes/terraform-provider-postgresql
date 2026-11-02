@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_query - terraform-provider-postgresql"
+page_title: "Data Source postgresql_query - postgresql"
 subcategory: "Utilities"
 description: |-
   Runs a read-only SQL query and returns the rows.

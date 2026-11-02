@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_user - terraform-provider-postgresql"
+page_title: "Data Source postgresql_user - postgresql"
 subcategory: "Roles & Permissions"
 description: |-
   Reads information about a PostgreSQL user.

@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_schemas - terraform-provider-postgresql"
+page_title: "Data Source postgresql_schemas - postgresql"
 subcategory: "Database Objects"
 description: |-
   Lists PostgreSQL schemas, with optional filters.
@@ -70,8 +70,8 @@ resource "postgresql_grant" "reader_per_schema" {
 
 - `database` (String) The database to list schemas from. Uses the provider default if not set.
 - `include_system_schemas` (Boolean) Whether to include system schemas (pg_* and information_schema). Default: false.
-- `like_pattern` (String) A SQL LIKE pattern to filter schema names.
-- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude schema names.
+- `like_pattern` (String) A SQL LIKE pattern to filter schema names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
+- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude schema names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
 
 ### Read-Only
 

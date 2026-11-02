@@ -1,14 +1,14 @@
-# Terraform Provider PostgreSQL 🚧
+# Terraform Provider PostgreSQL
 
-> 🚧 **This provider is under active development.** Some features may change before the first stable release.
+> **This provider is under active development.** Some features may change before the first stable release.
 
-Terraform provider for PostgreSQL. It manages roles, users, databases, schemas, and grants.
+Terraform provider for PostgreSQL. It manages roles, users, role memberships, databases, schemas, extensions, grants and default privileges.
 
 ## Requirements
 
-- [Terraform](https://www.terraform.io/downloads) >= 1.0
+- [Terraform](https://www.terraform.io/downloads) >= 1.5 (tested on 1.5.7 and the latest release)
 - [Go](https://go.dev/dl/) >= 1.26 (for building)
-- PostgreSQL >= 14
+- PostgreSQL 14 to 18
 
 ## Installation
 
@@ -47,10 +47,13 @@ You can also configure the provider with environment variables: `PGHOST`, `PGPOR
 | [`postgresql_database`](docs/resources/database.md) | Manages databases |
 | [`postgresql_schema`](docs/resources/schema.md) | Manages schemas |
 | [`postgresql_grant`](docs/resources/grant.md) | Manages GRANT privileges on objects |
+| [`postgresql_default_privileges`](docs/resources/default_privileges.md) | Manages privileges on objects created in the future |
+| [`postgresql_role_membership`](docs/resources/role_membership.md) | Manages one role membership |
+| [`postgresql_extension`](docs/resources/extension.md) | Manages extensions |
 
-## Data Sources
+## Data sources
 
-| Data Source | Description |
+| Data source | Description |
 |---|---|
 | [`postgresql_role`](docs/data-sources/role.md) | Reads role attributes |
 | [`postgresql_user`](docs/data-sources/user.md) | Reads user attributes |
@@ -138,7 +141,7 @@ cd terraform-provider-postgresql
 make build
 ```
 
-That's it. The Go tools (`golangci-lint`, `goimports`, `tfplugindocs`) are declared in `go.mod` and resolved by `go tool`, so there is nothing to install by hand.
+The Go tools (`golangci-lint`, `goimports`, `tfplugindocs`, `govulncheck`, `actionlint`) are declared in `go.mod` and resolved by `go tool`, so you do not need to install anything by hand.
 
 ### Build
 
@@ -151,12 +154,12 @@ make build
 Tests use [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to start a PostgreSQL container. Docker must be running.
 
 ```bash
-make test             # Unit + acceptance tests (PG 14, 15, 16, 17)
+make test             # Unit + acceptance tests (PG 14 to 18)
 ```
 
-See [TESTING.md](TESTING.md) for the details.
+Details are in [TESTING.md](TESTING.md).
 
-### Lint & Format
+### Lint and format
 
 ```bash
 make lint   # golangci-lint (via go tool)
@@ -190,11 +193,12 @@ The docs are generated from `templates/` and `examples/`. Never edit files in `d
 ├── templates/                           # Documentation templates
 ├── examples/                            # HCL examples used in docs
 └── .github/workflows/
-    ├── test.yml                         # CI: lint + tests
-    └── release.yml                      # CD: GoReleaser
+    ├── ci.yml                           # Checks, unit, acceptance matrix, coverage floor
+    ├── test.yml                         # Runs ci.yml on PRs, main, weekly and by hand
+    └── release.yml                      # Runs ci.yml, then GoReleaser and provenance
 ```
 
-### Claude Code Skills
+### Claude Code skills
 
 This project ships custom [Claude Code](https://github.com/DiegoBulhoes/claude) skills in `.claude/`:
 

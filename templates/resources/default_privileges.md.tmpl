@@ -1,0 +1,42 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: "Roles & Permissions"
+description: |-
+  Manages PostgreSQL default privileges: the privileges a role gets on objects another role creates in the future.
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages `ALTER DEFAULT PRIVILEGES`: the privileges `role` gets on tables, sequences, functions, types or schemas that `owner` creates from now on. It does not touch objects that already exist; use `postgresql_grant` for those.
+
+## Scope
+
+| Setting | Applies to |
+|---------|------------|
+| `schema` set | Objects `owner` creates in that schema |
+| `schema` unset | Objects `owner` creates in any schema of the database |
+| `object_type = "schema"` | Schemas `owner` creates; `schema` must be unset |
+
+Default privileges belong to one database: the one in `database`, or the provider's database when it is unset. The provider's user must be `owner`, a member of it, or a superuser.
+
+## Valid privileges
+
+The provider checks privilege names against the same allowlist as `postgresql_grant`, at plan time, before any SQL runs. Case does not matter; `ALL` stands for every privilege the server knows for the object type. The server rejects a keyword that does not fit the object type, such as `EXECUTE` on tables, and nothing changes.
+
+## Drift detection
+
+On refresh, the provider reads what `role` holds in `pg_default_acl` for the owner, schema and object type. A privilege revoked outside Terraform shows up as a change. `select` and `ALL` do not cause a diff when the server holds the same privileges.
+
+PostgreSQL's built-in defaults (the owner holds everything; `PUBLIC` gets `EXECUTE` on functions and `USAGE` on types) are not rows in `pg_default_acl` and are not managed here.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_default_privileges/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import as `owner/role/object_type/database/schema`, or `owner/role/object_type/database` for defaults in every schema. An empty database part means the provider's database. The privileges are read from the server:
+
+{{codefile "shell" "examples/resources/postgresql_default_privileges/import.sh"}}

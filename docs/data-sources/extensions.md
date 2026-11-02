@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_extensions - terraform-provider-postgresql"
+page_title: "Data Source postgresql_extensions - postgresql"
 subcategory: "Database Objects"
 description: |-
   Lists installed PostgreSQL extensions.

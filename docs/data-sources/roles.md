@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_roles - terraform-provider-postgresql"
+page_title: "Data Source postgresql_roles - postgresql"
 subcategory: "Roles & Permissions"
 description: |-
   Lists PostgreSQL roles, with optional filters.
@@ -37,9 +37,9 @@ data "postgresql_roles" "custom_roles" {
 
 ### Optional
 
-- `like_pattern` (String) A SQL LIKE pattern to filter role names.
+- `like_pattern` (String) A SQL LIKE pattern to filter role names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
 - `login_only` (Boolean) Whether to only include roles with LOGIN privilege. Default: false.
-- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude role names.
+- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude role names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
 
 ### Read-Only
 

@@ -11,7 +11,7 @@ Manages a PostgreSQL role as a permission group. A role holds a set of privilege
 
 ~> **Note:** Roles created here always have `NOLOGIN`. For users that log in with a password, use `postgresql_user`.
 
-## Inline `privilege` Blocks vs. Separate `postgresql_grant` Resources
+## Inline `privilege` blocks vs. separate `postgresql_grant` resources
 
 You can attach privileges to a role in two ways:
 
@@ -22,7 +22,7 @@ You can attach privileges to a role in two ways:
 
 Use inline blocks when the privileges are simple and change together. Use `postgresql_grant` when you need finer control, such as schema-level grants shared by many roles, or delegation with `with_grant_option`.
 
-~> **Privilege validation.** Keywords in `privilege.privileges` are checked against the same allowlist as `postgresql_grant`. The [grant resource docs](grant) have the full list.
+~> Keywords in `privilege.privileges` are checked against the same allowlist as `postgresql_grant`. The [grant resource docs](grant) have the full list.
 
 ## Example Usage
 
@@ -38,4 +38,8 @@ Import a role by its name:
 terraform import postgresql_role.readonly readonly
 ```
 
-Import does **not** recover inline `privilege` blocks. After an import, run `terraform plan`: the provider re-applies the `privilege` blocks from your config.
+Import does not recover inline `privilege` blocks. After an import, run `terraform plan`: the provider re-applies the `privilege` blocks from your config. Once applied, the blocks are read back on refresh, and a privilege revoked outside Terraform shows up as a change.
+
+## Destroy
+
+`DROP ROLE` fails while the role owns objects or holds privileges. Set `reassign_owned_to` to run `REASSIGN OWNED BY` and `DROP OWNED BY` first, in the provider's database. A privilege block on another database is revoked there.

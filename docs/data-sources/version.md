@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_version - terraform-provider-postgresql"
+page_title: "Data Source postgresql_version - postgresql"
 subcategory: "Database Objects"
 description: |-
   Reads the PostgreSQL server version.

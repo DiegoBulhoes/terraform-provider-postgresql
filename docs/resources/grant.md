@@ -1,5 +1,5 @@
 ---
-page_title: "Resource postgresql_grant - terraform-provider-postgresql"
+page_title: "Resource postgresql_grant - postgresql"
 subcategory: "Roles & Permissions"
 description: |-
   Manages PostgreSQL GRANT privileges on database objects.
@@ -7,11 +7,11 @@ description: |-
 
 # Resource (postgresql_grant)
 
-Manages PostgreSQL GRANT privileges on database objects such as databases, schemas, tables, sequences, and functions.
+Manages PostgreSQL GRANT privileges on databases, schemas, tables, sequences, and functions.
 
-## Valid Privileges
+## Valid privileges
 
-Privilege names are checked against an allowlist before any SQL is built. These keywords are accepted. Case does not matter, and they are upper-cased for you:
+The provider checks privilege names against an allowlist before it builds any SQL. It accepts these keywords in any case and upper-cases them:
 
 | Category | Keywords |
 |----------|----------|
@@ -22,17 +22,23 @@ Privilege names are checked against an allowlist before any SQL is built. These 
 | Maintenance | `MAINTAIN` |
 | Configuration | `SET`, `ALTER SYSTEM` |
 
-Anything else is rejected with an `Invalid privileges` error at plan or apply time. That covers typos like `SELCT` and injection attempts like `"SELECT; DROP"`.
+Any other name fails with an `Invalid privileges` error at plan or apply time, whether a typo like `SELCT` or an injection attempt like `"SELECT; DROP"`.
 
-## Drift Detection
+## Drift detection
 
-The provider compares Terraform state against the real grants in PostgreSQL for:
+On refresh, the provider reads the privileges the role holds on every object of the grant: each name in `objects`, or, when `objects` is empty, every object of the type in the schema. A privilege missing on any of them, such as on a table created after the apply, shows up as a change, and the next apply grants it again.
 
-- `object_type = "database"` — always
-- `object_type = "schema"` — always
-- `object_type = "table"`, `"sequence"`, `"function"` — **only when `objects = [...]` is specified**
+The comparison follows PostgreSQL's spelling, so `select`, `ALL` and `TEMP` do not cause a diff. `ALL` stands for every privilege the server knows for the object type.
 
-~> **Grants on `ALL` objects skip drift detection.** When `object_type` is `table`, `sequence`, or `function` and `objects` is empty or unset, the provider runs `GRANT ... ON ALL ... IN SCHEMA` and does **not** check privileges per object on refresh. Objects created outside Terraform will not show up as missing. To get drift detection, name the objects: `objects = ["foo", "bar"]`.
+## Functions
+
+Name a function alone to cover all its overloads, or with its argument types to cover one: `objects = ["refresh_cache", "lookup(integer)"]`. The provider resolves each name on the server, so a function that does not exist fails the apply.
+
+## Database
+
+Schema, table, sequence and function grants run in the database set in `database`; without it, in the provider's database. A database grant always runs on the provider's connection.
+
+~> **Destroying a grant on `ALL` objects** revokes the role's privileges on every object of the type in the schema, including privileges another `postgresql_grant` resource manages on a single object.
 
 ## Example Usage
 
@@ -133,9 +139,9 @@ resource "postgresql_grant" "full_sequences" {
 }
 ```
 
-### Granting with Delegation (`with_grant_option`)
+### Granting with delegation (`with_grant_option`)
 
-Set `with_grant_option = true` so the grantee can pass the same privileges on to others. This helps platform-team roles that manage access without being superuser:
+Set `with_grant_option = true` so the grantee can pass the same privileges on to others. Platform team roles use this to manage access without being superuser:
 
 ```terraform
 resource "postgresql_grant" "platform_admin" {
@@ -153,22 +159,20 @@ resource "postgresql_grant" "platform_admin" {
 ### Required
 
 - `object_type` (String) The object type to grant privileges on: database, schema, table, sequence, or function.
-- `privileges` (Set of String) The set of privileges to grant (e.g. SELECT, INSERT, USAGE, CREATE).
+- `privileges` (Set of String) The set of privileges to grant (e.g. SELECT, INSERT, USAGE, CREATE). Case-insensitive; ALL stands for every privilege of the object type.
 - `role` (String) The role to which privileges are granted.
 
 ### Optional
 
-- `database` (String) The database on which to grant privileges.
-
-~> **Note:** For database-level grants, the provider uses its configured connection. Ensure the provider is configured to connect to the correct database.
-- `objects` (List of String) Specific object names to grant on. If empty, grants on all objects of the given type in the schema.
+- `database` (String) The database of the grant. Required when object_type is database. Schema, table, sequence and function grants run in this database, which defaults to the provider's database.
+- `objects` (List of String) Names of the tables, sequences or functions to grant on. A function named alone covers all its overloads; with argument types, as in f(integer), it covers one. If empty, the grant covers all objects of the type in the schema, and destroying it revokes the privileges on all of them.
 - `schema` (String) The schema on which to grant privileges.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `with_grant_option` (Boolean) Whether the grantee can grant the same privileges to others.
 
 ### Read-Only
 
-- `id` (String) Composite identifier: {role}_{object_type}_{database}_{schema}.
+- `id` (String) The import ID: role/object_type/database[/schema[/object1,object2]].
 
 <a id="nestedblock--timeouts"></a>
 ### Nested Schema for `timeouts`
@@ -177,11 +181,12 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import
 
-Import a grant as `role/object_type/database/schema`, or as `role/object_type/database` for database-level grants:
+Import a grant as `role/object_type/database/schema`, or as `role/object_type/database` for database-level grants. For a grant on named objects, add the object names, comma-separated. The privileges are read from the server:
 
 ```shell
 # Database-level grant: role/object_type/database (3 parts, no schema)
@@ -190,6 +195,9 @@ terraform import postgresql_grant.db_connect "app_user/database/my_application"
 # Schema-level grant: role/object_type/database/schema (4 parts)
 terraform import postgresql_grant.schema_usage "app_user/schema/my_application/app_schema"
 
-# Object-level grant (tables, sequences, functions): same 4-part format
+# Grant on all objects of a type: same 4-part format
 terraform import postgresql_grant.tables "app_user/table/my_application/public"
+
+# Grant on named objects: object names, comma-separated, as a fifth part
+terraform import postgresql_grant.orders "app_user/table/my_application/public/orders,order_items"
 ```

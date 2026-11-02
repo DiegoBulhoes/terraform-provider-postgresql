@@ -1,0 +1,34 @@
+---
+page_title: "{{.Type}} {{.Name}} - {{.ProviderName}}"
+subcategory: "Database Objects"
+description: |-
+  Manages a PostgreSQL extension.
+---
+
+# {{.Type}} ({{.Name}})
+
+Manages a PostgreSQL extension.
+
+The extension is installed in the database set in `database`, or in the provider's database when it is not set. Its files must already be on the server: `pg_available_extensions` lists the ones that are.
+
+## Behavior details
+
+- Create runs `CREATE EXTENSION`, with `WITH SCHEMA` and `VERSION` when `schema` and `version` are set. When they are not, the server picks them and the provider reads them back.
+- `create_cascade = true` adds `CASCADE`, so the extensions this one requires are installed too. This resource does not manage them, and they stay installed on destroy.
+- Changing `schema` runs `ALTER EXTENSION ... SET SCHEMA`. It works only for relocatable extensions.
+- Changing `version` runs `ALTER EXTENSION ... UPDATE TO`. The server must ship an update path to that version; downgrades usually have none.
+- When `schema` and `version` change together, both changes run in one transaction: if one fails, neither applies.
+- Delete runs `DROP EXTENSION`, with `CASCADE` only when `drop_cascade = true`. Without it, an extension that other objects use is not dropped and the error says so.
+- On refresh, the provider reads the schema and version from `pg_extension`. If the extension or its database is gone, the provider removes it from state.
+
+## Example Usage
+
+{{tffile "examples/resources/postgresql_extension/resource.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import an extension by its name, or as `database/extension_name`:
+
+{{codefile "shell" "examples/resources/postgresql_extension/import.sh"}}

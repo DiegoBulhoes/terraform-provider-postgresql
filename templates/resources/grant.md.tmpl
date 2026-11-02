@@ -7,11 +7,11 @@ description: |-
 
 # {{.Type}} ({{.Name}})
 
-Manages PostgreSQL GRANT privileges on database objects such as databases, schemas, tables, sequences, and functions.
+Manages PostgreSQL GRANT privileges on databases, schemas, tables, sequences, and functions.
 
-## Valid Privileges
+## Valid privileges
 
-Privilege names are checked against an allowlist before any SQL is built. These keywords are accepted. Case does not matter, and they are upper-cased for you:
+The provider checks privilege names against an allowlist before it builds any SQL. It accepts these keywords in any case and upper-cases them:
 
 | Category | Keywords |
 |----------|----------|
@@ -22,25 +22,31 @@ Privilege names are checked against an allowlist before any SQL is built. These 
 | Maintenance | `MAINTAIN` |
 | Configuration | `SET`, `ALTER SYSTEM` |
 
-Anything else is rejected with an `Invalid privileges` error at plan or apply time. That covers typos like `SELCT` and injection attempts like `"SELECT; DROP"`.
+Any other name fails with an `Invalid privileges` error at plan or apply time, whether a typo like `SELCT` or an injection attempt like `"SELECT; DROP"`.
 
-## Drift Detection
+## Drift detection
 
-The provider compares Terraform state against the real grants in PostgreSQL for:
+On refresh, the provider reads the privileges the role holds on every object of the grant: each name in `objects`, or, when `objects` is empty, every object of the type in the schema. A privilege missing on any of them, such as on a table created after the apply, shows up as a change, and the next apply grants it again.
 
-- `object_type = "database"` — always
-- `object_type = "schema"` — always
-- `object_type = "table"`, `"sequence"`, `"function"` — **only when `objects = [...]` is specified**
+The comparison follows PostgreSQL's spelling, so `select`, `ALL` and `TEMP` do not cause a diff. `ALL` stands for every privilege the server knows for the object type.
 
-~> **Grants on `ALL` objects skip drift detection.** When `object_type` is `table`, `sequence`, or `function` and `objects` is empty or unset, the provider runs `GRANT ... ON ALL ... IN SCHEMA` and does **not** check privileges per object on refresh. Objects created outside Terraform will not show up as missing. To get drift detection, name the objects: `objects = ["foo", "bar"]`.
+## Functions
+
+Name a function alone to cover all its overloads, or with its argument types to cover one: `objects = ["refresh_cache", "lookup(integer)"]`. The provider resolves each name on the server, so a function that does not exist fails the apply.
+
+## Database
+
+Schema, table, sequence and function grants run in the database set in `database`; without it, in the provider's database. A database grant always runs on the provider's connection.
+
+~> **Destroying a grant on `ALL` objects** revokes the role's privileges on every object of the type in the schema, including privileges another `postgresql_grant` resource manages on a single object.
 
 ## Example Usage
 
 {{tffile "examples/resources/postgresql_grant/resource.tf"}}
 
-### Granting with Delegation (`with_grant_option`)
+### Granting with delegation (`with_grant_option`)
 
-Set `with_grant_option = true` so the grantee can pass the same privileges on to others. This helps platform-team roles that manage access without being superuser:
+Set `with_grant_option = true` so the grantee can pass the same privileges on to others. Platform team roles use this to manage access without being superuser:
 
 ```terraform
 resource "postgresql_grant" "platform_admin" {
@@ -56,6 +62,6 @@ resource "postgresql_grant" "platform_admin" {
 
 ## Import
 
-Import a grant as `role/object_type/database/schema`, or as `role/object_type/database` for database-level grants:
+Import a grant as `role/object_type/database/schema`, or as `role/object_type/database` for database-level grants. For a grant on named objects, add the object names, comma-separated. The privileges are read from the server:
 
 {{codefile "shell" "examples/resources/postgresql_grant/import.sh"}}

@@ -22,8 +22,8 @@ provider "postgresql" {
   alias = "from_env"
 }
 
-# Managed service (RDS / Cloud SQL / Azure Database): superuser = false skips
-# operations that require superuser privileges on the server.
+# Managed service (RDS / Cloud SQL / Azure Database): a user with CREATEROLE
+# but not superuser works, since role flags are sent only when they change.
 provider "postgresql" {
   alias    = "managed"
   host     = "myapp.abc123.us-east-1.rds.amazonaws.com"
@@ -32,8 +32,6 @@ provider "postgresql" {
   password = var.db_password
   database = "postgres"
   sslmode  = "require"
-
-  superuser = false
 }
 
 # TLS with client certificates. Paths containing spaces, single quotes, or

@@ -1,5 +1,5 @@
 ---
-page_title: "Resource postgresql_database - terraform-provider-postgresql"
+page_title: "Resource postgresql_database - postgresql"
 subcategory: "Database Objects"
 description: |-
   Manages a PostgreSQL database.
@@ -9,9 +9,9 @@ description: |-
 
 Manages a PostgreSQL database.
 
-!> **Warning:** Destroying this resource runs `DROP DATABASE`. PostgreSQL refuses that while any connection to the database is open, so close them first.
+!> **Warning:** Destroying this resource runs `DROP DATABASE`. PostgreSQL refuses that while any session is connected to the database, unless `force_drop = true` terminates them first. The provider closes its own connections before the drop.
 
-~> **Note:** Changing `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` destroys and recreates the database.
+~> **Note:** Changing `name`, `template`, `encoding`, `lc_collate`, or `lc_ctype` destroys and recreates the database. The server does not record the template, so after an import a `template` change only updates state. `encoding` accepts any spelling the server does, such as `utf8` or `UTF-8`.
 
 ## Example Usage
 
@@ -76,12 +76,13 @@ resource "postgresql_database" "analytics" {
 - `allow_connections` (Boolean) If false then no one can connect to this database.
 - `connection_limit` (Number) How many concurrent connections can be made to this database. -1 means no limit.
 - `encoding` (String) Character set encoding to use in the new database.
+- `force_drop` (Boolean) If true, destroy terminates the sessions connected to the database (DROP DATABASE ... WITH (FORCE)). Default: false.
 - `is_template` (Boolean) If true, this database can be cloned by any user with CREATEDB privileges.
 - `lc_collate` (String) Collation order (LC_COLLATE) to use in the new database.
 - `lc_ctype` (String) Character classification (LC_CTYPE) to use in the new database.
 - `owner` (String) The role name of the owner of the database.
 - `tablespace_name` (String) The name of the tablespace that will be associated with the new database.
-- `template` (String) The name of the template database from which to create the new database.
+- `template` (String) The name of the template database from which to create the new database. Default: template0. The server does not record it, so after an import a change does not recreate the database.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -95,6 +96,7 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+- `read` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Read operations occur during any refresh or planning operation when refresh is enabled.
 - `update` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 
 ## Import

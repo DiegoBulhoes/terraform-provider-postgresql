@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_database - terraform-provider-postgresql"
+page_title: "Data Source postgresql_database - postgresql"
 subcategory: "Database Objects"
 description: |-
   Reads a PostgreSQL database.

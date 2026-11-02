@@ -1,5 +1,5 @@
 ---
-page_title: "Data Source postgresql_tables - terraform-provider-postgresql"
+page_title: "Data Source postgresql_tables - postgresql"
 subcategory: "Database Objects"
 description: |-
   Lists PostgreSQL tables, with optional filters.
@@ -41,8 +41,8 @@ data "postgresql_tables" "views" {
 ### Optional
 
 - `database` (String) The database to query. Uses the provider default if not set.
-- `like_pattern` (String) A SQL LIKE pattern to filter table names.
-- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude table names.
+- `like_pattern` (String) A SQL LIKE pattern to filter table names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
+- `not_like_pattern` (String) A SQL NOT LIKE pattern to exclude table names. _ matches any one character and % any run; escape them with a backslash (\_) to match them literally.
 - `schema` (String) Filter tables by schema name.
 - `table_type` (String) Filter by table type: BASE TABLE, VIEW, or FOREIGN TABLE.
 
