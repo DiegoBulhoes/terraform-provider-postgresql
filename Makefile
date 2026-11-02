@@ -2,7 +2,7 @@
 
 BINARY_NAME = terraform-provider-postgresql
 GO          = go
-PG_VERSIONS ?= 14 15 16 17
+PG_VERSIONS ?= 14 15 16 17 18
 
 ## ── All (CI pipeline) ───────────────────────────────────────────
 .PHONY: all
@@ -30,7 +30,7 @@ lint: fmt
 
 .PHONY: security
 security:
-	govulncheck ./...
+	$(GO) tool govulncheck ./...
 
 ## ── Tests ───────────────────────────────────────────────────────
 .PHONY: test
@@ -49,8 +49,8 @@ test:
 ## ── Docs ────────────────────────────────────────────────────────
 .PHONY: docs
 docs:
-	$(GO) tool tfplugindocs generate
-	$(GO) tool tfplugindocs validate
+	$(GO) tool tfplugindocs generate --provider-name postgresql
+	$(GO) tool tfplugindocs validate --provider-name postgresql
 
 ## ── CI parity (matches .github/workflows/test.yml) ──────────────
 # `make ci` mirrors the GitHub Actions `checks` + `unit` jobs and does
@@ -62,6 +62,7 @@ docs:
 .PHONY: ci-vet
 ci-vet:
 	$(GO) vet ./...
+	$(GO) vet -tags integration ./...
 
 .PHONY: ci-fmt-check
 ci-fmt-check:
@@ -78,25 +79,29 @@ ci-lint:
 
 .PHONY: ci-docs
 ci-docs:
-	$(GO) tool tfplugindocs validate
+	$(GO) tool tfplugindocs validate --provider-name postgresql
 
 .PHONY: ci-vuln
 ci-vuln:
-	@command -v govulncheck >/dev/null 2>&1 || { \
-		echo "installing govulncheck..."; \
-		$(GO) install golang.org/x/vuln/cmd/govulncheck@latest; \
-	}
-	govulncheck ./...
+	$(GO) tool govulncheck ./...
+
+.PHONY: ci-tidy
+ci-tidy:
+	$(GO) mod tidy -diff
+
+.PHONY: ci-actions
+ci-actions:
+	$(GO) tool actionlint
 
 .PHONY: ci-unit
 ci-unit:
-	$(GO) test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage-unit.out ./test/unit/...
+	$(GO) test -race -count=1 -covermode=atomic -coverpkg=./internal/... -coverprofile=coverage-unit.out ./test/unit/...
 	@$(GO) tool cover -func=coverage-unit.out | tail -1
 
 .PHONY: ci
-ci: ci-vet ci-fmt-check ci-lint ci-docs ci-vuln ci-unit
+ci: ci-tidy ci-vet ci-fmt-check ci-lint ci-actions ci-docs ci-vuln ci-unit
 	@echo
-	@echo "✓ CI checks + unit tests pass (mirrors .github/workflows/test.yml 'checks' + 'unit' jobs)"
+	@echo "✓ CI checks + unit tests pass (mirrors the 'checks' and 'unit' jobs of .github/workflows/ci.yml)"
 	@echo "  Acceptance tests require Docker + PG — run 'make ci-acceptance' for full parity."
 
 .PHONY: ci-acceptance
@@ -105,9 +110,15 @@ ci-acceptance:
 		echo "=== PostgreSQL $$v ==="; \
 		POSTGRES_IMAGE=postgres:$$v-alpine TF_ACC=1 \
 		TF_ACC_TERRAFORM_PATH=$$(which terraform) \
-		$(GO) test -tags integration -timeout 600s -count=1 -coverpkg=./internal/... ./test/integration/... || exit 1; \
+		$(GO) test -tags integration -timeout 900s -count=1 -covermode=atomic -coverpkg=./internal/... \
+			-coverprofile=coverage-acceptance-$$v.out ./test/integration/... || exit 1; \
 		echo ""; \
 	done
+
+# Unit and acceptance coverage together, against the floor CI enforces.
+.PHONY: coverage
+coverage: ci-unit ci-acceptance
+	./scripts/coverage.sh 90 coverage-unit.out coverage-acceptance-17.out
 
 ## ── Housekeeping ────────────────────────────────────────────────
 .PHONY: tidy
@@ -116,4 +127,4 @@ tidy:
 
 .PHONY: clean
 clean:
-	rm -f $(BINARY_NAME) coverage.out coverage.html coverage-unit.out
+	rm -f $(BINARY_NAME) coverage*.out coverage.html

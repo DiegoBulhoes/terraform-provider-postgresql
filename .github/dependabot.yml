@@ -1,0 +1,24 @@
+version: 2
+
+# A release must be 15 days old before it is proposed, so a compromised
+# version has time to be found and pulled first.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 15
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 15
+    groups:
+      actions:
+        patterns: ["*"]
